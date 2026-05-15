@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Light editorial theme — warm off-white with deep ink type */
+  --bg-base: #F6F4EF;          /* warm cream backdrop */
+  --bg-surface: #FFFFFF;       /* card / panel surface */
+  --bg-elevated: #F0EDE6;      /* hover / subtle elevation */
+  --bg-overlay: #EAE6DC;       /* tooltip / modal background */
+
+  --border-subtle: rgba(28, 27, 24, 0.07);
+  --border-default: rgba(28, 27, 24, 0.12);
+  --border-strong: rgba(28, 27, 24, 0.22);
+
+  --text-primary: #1C1B18;     /* deep warm ink */
+  --text-secondary: #6B6862;   /* muted warm gray */
+  --text-tertiary: #A8A39A;    /* disabled / placeholder */
+
+  --accent-primary: #2D2A24;   /* deep espresso accent (CTA + active) */
+  --accent-hover: #45413A;
+  --accent-glow: #E8FF6A;      /* still used very sparingly for the logo dot */
+
+  --source-nobroker: #16A34A;   /* green, slightly deeper for light bg contrast */
+  --source-magicbricks: #EA580C; /* burnt orange */
+  --source-99acres: #2563EB;    /* deeper blue */
+
+  --rent-low: #16A34A;
+  --rent-mid: #D97706;
+  --rent-high: #DC2626;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-dm-sans), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--accent-glow);
+  color: var(--text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
