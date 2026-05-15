@@ -229,7 +229,7 @@ export default function Home() {
           transition: "opacity 400ms ease",
         }}
       >
-        {/* Map layer — zIndex 0 creates a stacking context that contains
+        {/* Map layer. zIndex 0 creates a stacking context that contains
             Leaflet's internal pane z-indexes (200, 600, 1000) so they don't
             escape and bury the overlay UI above. */}
         <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
@@ -310,7 +310,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Count — editorial number, not a pill */}
+          {/* Count: editorial number, not a pill */}
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
             <span
               style={{
@@ -388,7 +388,7 @@ export default function Home() {
           )}
         </div>
 
-        {/* Bottom-left footer cluster — hidden when a listing card is open */}
+        {/* Bottom-left footer cluster, hidden when a listing card is open */}
         {!selectedListing && (
           <div
             className="trurent-legend"
@@ -404,7 +404,7 @@ export default function Home() {
               transition: "opacity 200ms ease",
             }}
           >
-            {/* Rent legend — single horizontal row */}
+            {/* Rent legend: single horizontal row */}
             <div
               style={{
                 display: "flex",
@@ -465,7 +465,7 @@ export default function Home() {
               </span>
             </div>
 
-            {/* Tiny demo footer — much quieter */}
+            {/* Tiny demo footer, much quieter */}
             <span
               className="trurent-demo-badge"
               style={{
@@ -482,7 +482,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Empty state — only when filters are active AND nothing matches */}
+        {/* Empty state: only when filters are active AND nothing matches */}
         {hasFilters && filteredListings.length === 0 && (
           <div
             style={{
@@ -558,7 +558,7 @@ export default function Home() {
           onClose={() => setSelectedListing(null)}
         />
 
-        {/* Chat widget — collapses to FAB when a listing is open */}
+        {/* Chat widget: collapses to FAB when a listing is open */}
         <ChatWidget
           onFiltersUpdate={handleFiltersUpdate}
           forceCollapsed={!!selectedListing}

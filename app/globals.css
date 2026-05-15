@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  /* Light editorial theme — warm off-white with deep ink type */
+  /* Light editorial theme, warm off-white with deep ink type */
   --bg-base: #F6F4EF;          /* warm cream backdrop */
   --bg-surface: #FFFFFF;       /* card / panel surface */
   --bg-elevated: #F0EDE6;      /* hover / subtle elevation */

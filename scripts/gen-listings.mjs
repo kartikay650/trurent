@@ -92,7 +92,7 @@ const SUB_AREAS = {
 const FURNISHED = ["fully", "semi", "unfurnished"];
 const SOURCES = ["nobroker", "magicbricks", "99acres"];
 
-// Amenity pools by furnished level (rough heuristic — fully furnished tend to have more)
+// Amenity pools by furnished level (rough heuristic: fully furnished tend to have more)
 const AMENITY_POOLS = {
   fully:        ["gym", "pool", "parking", "power_backup", "security", "garden"],
   semi:         ["parking", "power_backup", "gym", "security", "garden"],

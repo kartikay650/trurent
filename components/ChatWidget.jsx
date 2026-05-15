@@ -190,7 +190,7 @@ export default function ChatWidget({ onFiltersUpdate, forceCollapsed = false }) 
         if (typeof parsed?.isOpen === "boolean") setIsOpen(parsed.isOpen);
       }
     } catch {
-      /* corrupt or absent — fall through to defaults */
+      /* corrupt or absent, fall through to defaults */
     }
     setHydrated(true);
   }, []);
@@ -205,7 +205,7 @@ export default function ChatWidget({ onFiltersUpdate, forceCollapsed = false }) 
         JSON.stringify({ messages, isOpen }),
       );
     } catch {
-      /* quota exceeded or storage disabled — silently skip */
+      /* quota exceeded or storage disabled, silently skip */
     }
   }, [messages, isOpen, hydrated]);
 
@@ -253,7 +253,7 @@ export default function ChatWidget({ onFiltersUpdate, forceCollapsed = false }) 
 
     // Send a CLEAN text-only history to the API. Our UI assistant messages carry
     // tool-call pill blocks for rendering, but the API only accepts Anthropic's
-    // canonical block shapes — and the agent doesn't need to see prior tool_use
+    // canonical block shapes, and the agent doesn't need to see prior tool_use
     // blocks anyway; the user's text intent is the source of truth.
     const apiHistory = [...messages, userMsg]
       .map((m) => {
@@ -379,7 +379,7 @@ export default function ChatWidget({ onFiltersUpdate, forceCollapsed = false }) 
       }
       case "assistant_turn_complete":
         // Server signals one completed turn within the agent loop. Nothing to do for
-        // rendering — we already streamed the deltas. Not needed for history either:
+        // rendering. We already streamed the deltas. Not needed for history either:
         // we strip down to text on the next send (see sendMessage / apiHistory).
         return;
       case "turn_summary": {
@@ -697,7 +697,7 @@ export default function ChatWidget({ onFiltersUpdate, forceCollapsed = false }) 
             <div ref={scrollAnchorRef} />
           </div>
 
-          {/* Cold-start suggestion chips — only when there's no real conversation yet */}
+          {/* Cold-start suggestion chips, only when there's no real conversation yet */}
           {messages.length <= 1 && !isLoading && (
             <div
               style={{

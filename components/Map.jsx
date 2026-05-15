@@ -116,7 +116,7 @@ function MapController({ listings, selectedId, onSelectListing }) {
     }
   }, [listings, map, selectedId]);
 
-  // Soft "search area" overlay — translucent circles around each cluster of
+  // Soft "search area" overlay: translucent circles around each cluster of
   // listings, so the searched area reads visually like the reference image.
   // Only shown when there's a meaningful focus (< 30 listings AND fewer than
   // ~half the dataset visible).

@@ -119,7 +119,7 @@ export default function ListingCard({ listing, onClose }) {
           fontFamily: "var(--font-dm-sans), sans-serif",
         }}
       >
-        {/* Hero image — fills top of the card, with a status pill overlaid */}
+        {/* Hero image: fills top of the card, with a status pill overlaid */}
         {listing.photos?.[0] && (
           <div
             style={{
@@ -144,7 +144,7 @@ export default function ListingCard({ listing, onClose }) {
                 display: "block",
               }}
             />
-            {/* Status pill — "Available · Source" with a colored dot */}
+            {/* Status pill: "Available · Source" with a colored dot */}
             <div
               style={{
                 position: "absolute",
@@ -183,7 +183,7 @@ export default function ListingCard({ listing, onClose }) {
           className="trurent-card-inner"
           style={{ padding: "20px 24px 32px" }}
         >
-          {/* Thumbnail strip — only if we have additional photos */}
+          {/* Thumbnail strip: only if we have additional photos */}
           {listing.photos?.length > 1 && (
             <div
               style={{
@@ -440,7 +440,7 @@ export default function ListingCard({ listing, onClose }) {
                   fontSize: 13,
                 }}
               >
-                —
+                Not listed
               </div>
             )}
           </div>
