@@ -4,9 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-// Markdown component overrides tuned for the dark editorial theme. Keeps Claude's
-// rich output (bold, lists, tables) readable inside the chat bubble without bolting
-// on heavy stylesheets.
+// Markdown component overrides tuned for the chat theme. Keeps Claude's rich
+// output (bold, lists, tables) readable in the bubble without a heavy stylesheet.
 const MD_COMPONENTS = {
   p: ({ node, ...props }) => (
     <p style={{ margin: "0 0 6px 0", lineHeight: 1.6 }} {...props} />
