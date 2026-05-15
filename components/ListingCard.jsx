@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { formatINR } from "@/lib/filterListings";
 
 const SOURCE_COLOR = {
+  reddit: "#FF4500",
   nobroker: "#16A34A",
   magicbricks: "#EA580C",
   "99acres": "#2563EB",
 };
 
 const SOURCE_NAME = {
+  reddit: "Reddit",
   nobroker: "NoBroker",
   magicbricks: "MagicBricks",
   "99acres": "99acres",
@@ -453,13 +455,29 @@ export default function ListingCard({ listing, onClose }) {
               color: "var(--text-secondary)",
               lineHeight: 1.6,
               display: "-webkit-box",
-              WebkitLineClamp: 2,
+              WebkitLineClamp: 3,
               WebkitBoxOrient: "vertical",
               overflow: "hidden",
             }}
           >
             {listing.description}
           </div>
+
+          {/* Source attribution: only when from Reddit (we have author + sub) */}
+          {listing.source === "reddit" && listing.sourceAuthor && (
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 11,
+                color: "var(--text-tertiary)",
+                fontFamily: "var(--font-dm-mono), monospace",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              Posted by u/{listing.sourceAuthor}
+              {listing.sourceSubreddit ? ` in r/${listing.sourceSubreddit}` : ""}
+            </div>
+          )}
 
           {/* CTA */}
           <button

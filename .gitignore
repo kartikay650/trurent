@@ -6,3 +6,4 @@ out
 .DS_Store
 .vercel
 *.log
+scripts/.cache/

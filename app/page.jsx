@@ -42,6 +42,7 @@ function AnimatedNumber({ value }) {
 }
 
 const SOURCE_NAME = {
+  reddit: "Reddit",
   nobroker: "NoBroker",
   magicbricks: "MagicBricks",
   "99acres": "99acres",

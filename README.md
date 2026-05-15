@@ -5,9 +5,9 @@
 > **Live demo:** [trurent-five.vercel.app](https://trurent-five.vercel.app/)
 > **Submission:** Activate AI Fellowship 2026
 
-A streaming AI agent that turns plain English into a structured Bangalore flat search. I built this in about 8 hours for the Activate AI Fellowship application.
+A streaming AI agent that turns plain English into a structured Bangalore flat search, running over **39 real rental listings scraped from Reddit posts** (r/bangalore, r/bangalorerentals, r/Bengaluru, etc.). Built in about 10 hours for the Activate AI Fellowship application.
 
-You type something like *"I work at Manyata, looking for 1-2 BHK under 25k with zero brokerage."* The agent figures out that Manyata means Hebbal and Hennur, builds a structured filter, runs it against the listings, and the map zooms in. If you follow up with *"which has a gym?"*, it remembers everything you said before and just adds the gym filter.
+You type something like *"2BHK in Koramangala under 30k"* and the agent builds a structured filter, runs it, and the map zooms in. If you follow up with *"which has a gym?"*, it remembers everything you said before and adds the new filter. Every listing links back to its original Reddit post so you can actually contact the person who posted it.
 
 I wanted it to feel like talking to a Bangalore local who knows the neighbourhoods, not like filling out a search form.
 
@@ -33,7 +33,7 @@ Try these in order. Each one shows off something different the agent does:
    It knows we're Bangalore-only and politely redirects. Doesn't waste a tool call.
 
 6. **`Show me everything`**
-   Resets, shows all 132 listings, gives a written breakdown by BHK and price.
+   Resets, shows all 39 real listings, gives a written breakdown by BHK and price.
 
 ---
 
@@ -124,9 +124,17 @@ Every additional tool widens the prompt, makes mis-routing more likely, and adds
 
 Real users mistype. A flow that says "Koramangla isn't a place, did you mean Koramangala?" shifts the burden back onto the user. Levenshtein matching with a length-aware ceiling absorbs the typo silently and returns useful results. The trade-off (occasional mismatch on things like "Pune" that aren't really Bangalore) is surfaced explicitly via the tool's `unknown_localities` field.
 
-### Why synthetic data, not scraped listings
+### Why Reddit, not scraped NoBroker / MagicBricks / 99acres
 
-NoBroker, MagicBricks, and 99acres all explicitly prohibit scraping in their terms of service. Their listing photos are copyrighted by individual owners. Ingesting their data into a product positioned as "skip the brokers" is exactly the kind of thing their legal teams pursue. So the 132-listing dataset is synthetic but structurally realistic: real Bangalore localities, realistic price bands per area, balanced source distribution. A real version of this would either use owner-direct uploads (which is what NoBroker actually did) or a partner API.
+NoBroker, MagicBricks, and 99acres all explicitly prohibit scraping in their terms of service. Their listing photos are copyrighted by individual owners. Ingesting their data into a product positioned as "skip the brokers" is exactly the kind of thing their legal teams pursue. So I sourced from Reddit instead.
+
+Reddit posts in subs like r/bangalorerentals, r/bangalore, and r/Bengaluru are public content posted by individuals offering their flats directly. The PullPush archive API surfaces them without violating Reddit's ToS (public read access is allowed). Each listing in the dataset links back to its original Reddit post so renters can contact the owner directly.
+
+The trade-off: Reddit is not a dense rental marketplace. Out of 1,412 posts scraped, only ~600 passed a local pre-filter and Claude Haiku 4.5 confirmed 39 as actual listings. The rest were complaints, broker scam stories, "wanted" ads, and market discussions. That's a 2.8% yield. A production version would integrate a real-listings API (partner agreement) or build owner-direct uploads, like NoBroker's actual model.
+
+### Why the pipeline matters more than the data count
+
+The dataset is small but the pipeline is source-agnostic. `scrape-reddit.mjs` does: fetch → local filter → LLM extract → geocode → write. Swap the fetcher for a MagicBricks partner API and the rest of the pipeline doesn't change. The agent doesn't care where the listings came from. That's the scaling story.
 
 ### Why NDJSON, not Server-Sent Events
 
@@ -160,7 +168,7 @@ No state management library, no UI kit, no auth. Roughly 1000 lines of applicati
 ## What I deliberately left out
 
 - User accounts, saved listings, shortlists. It's a demo. Out of scope.
-- Real listings scraping. Legal reasons covered above.
+- Scraping NoBroker / MagicBricks / 99acres directly. Legal reasons covered above. Reddit gave us real data without ToS issues.
 - A `compare_listings` or `rank_by_value` tool. Claude composes both with the existing tools.
 - Voice input. Demo-fragile (mic permission prompts on first interaction).
 - Marker clustering. Listings spread out enough that overlap isn't an issue at default zoom.
@@ -171,11 +179,13 @@ No state management library, no UI kit, no auth. Roughly 1000 lines of applicati
 
 ## Honest limitations
 
-- 132 listings. A real product needs orders of magnitude more. Some niche queries do hit zero (e.g. "Cunningham Road 1BHK with pool").
-- Synthetic data. Coordinates are jittered around real locality centroids; prices follow real bands but aren't real listings.
-- No real commute calculation. "Which has the shortest commute" works via locality reasoning, but there's no actual distance or time math.
-- About 14 photos rotate across 132 listings, so several listings share the same hero shot.
-- No marker clustering at extreme zoom-out.
+- **39 real listings.** A production version needs orders of magnitude more. Many niche queries hit zero. The scrape yield off Reddit was 2.8% (1,412 posts → 39 keeps).
+- **Most listings are 400-600 days old.** PullPush gave us archival posts; the flats themselves are probably long-rented. The data is real (you can click each one to verify) but not current. A live version would need a continuous scrape against fresh Reddit posts.
+- **BHK is heavily skewed to 1BHK** (28 / 39). That's because most Reddit posts are "room in a shared 3BHK" listings rather than whole-flat rentals. It's a real Bangalore pattern, not a data artifact.
+- **Geocoding hit rate is moderate.** Of 39 listings, 6 got pixel-precise coordinates from Nominatim; the other 33 fell back to the neighbourhood centroid + small jitter. Real addresses in Reddit posts are often vague.
+- **No real commute calculation.** "Which has the shortest commute" works via locality reasoning, but there's no actual distance or time math.
+- **About 12 Unsplash photos rotate across 39 listings**, so several listings share the same hero.
+- **No marker clustering at extreme zoom-out.**
 
 ---
 
@@ -210,9 +220,12 @@ components/
 lib/
   filterListings.js     The filter, fuzzy locality matcher, normalizers.
 public/data/
-  listings.json         132 synthetic Bangalore listings with photos.
+  listings.json         39 real Bangalore rental listings scraped from Reddit.
 scripts/
-  gen-listings.mjs      Seeded dataset generator (idempotent).
-  add-photos.mjs        Adds Unsplash photo URLs to each listing.
+  scrape-reddit.mjs     The pipeline: PullPush fetch -> local filter -> Haiku
+                        extraction -> Nominatim geocoding -> listings.json.
+  gen-listings.mjs      (Unused after the Reddit pivot.) Seeded synthetic
+                        dataset generator. Kept for reference.
+  add-photos.mjs        (Unused after the Reddit pivot.) Adds Unsplash photos.
   test-filters.mjs      Smoke tests for the filter (15 cases).
 ```
