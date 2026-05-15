@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import MapWrapper from "@/components/MapWrapper";
 import ListingCard from "@/components/ListingCard";
 import ChatWidget from "@/components/ChatWidget";
+import FilterPanel from "@/components/FilterPanel";
 import {
   filterListings,
   shortRent,
@@ -215,7 +216,7 @@ export default function Home() {
             left: 12px !important;
           }
           .trurent-logo { font-size: 18px !important; }
-          .trurent-legend, .trurent-demo-badge { display: none !important; }
+          .trurent-legend { display: none !important; }
         }
       `}</style>
 
@@ -335,6 +336,9 @@ export default function Home() {
             >
               {filteredListings.length === 1 ? "flat" : "flats"}
               {countTruncated && ` of ${allListings.length}`}
+            </span>
+            <span style={{ marginLeft: 8 }}>
+              <FilterPanel filters={filters} setFilters={setFilters} />
             </span>
           </div>
 
@@ -466,20 +470,6 @@ export default function Home() {
               </span>
             </div>
 
-            {/* Tiny demo footer, much quieter */}
-            <span
-              className="trurent-demo-badge"
-              style={{
-                fontSize: 10,
-                color: "var(--text-tertiary)",
-                letterSpacing: "0.06em",
-                textTransform: "uppercase",
-                paddingLeft: 4,
-                fontFamily: "var(--font-dm-sans), sans-serif",
-              }}
-            >
-              Demo data · 50 listings
-            </span>
           </div>
         )}
 
