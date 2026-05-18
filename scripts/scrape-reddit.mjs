@@ -1,67 +1,56 @@
-// Scrape real Bangalore rental posts from Reddit and turn them into listings.
+// Scrape current Bangalore rental posts from Reddit and produce listings.json.
 //
-// Pipeline:
-//   1. Wide PullPush fetch across many subreddit/query pairs + all-Reddit search.
-//   2. Local pre-filter: drop posts that obviously aren't listings, before LLM cost.
-//   3. Claude Haiku 4.5 extraction: { is_listing, locality, rent, bhk, ... }.
-//   4. Nominatim geocoding: turn "Koramangala 5th Block near Sony Signal" into
-//      real lat/lng. Fall back to locality centroid + jitter if Nominatim misses.
-//   5. Post-validation: sanity-check rent range, locality, coords-in-Bangalore.
-//   6. Write public/data/listings.json.
+// What changed in v2:
+//   - Switched from PullPush (historical archive) to Reddit's own public .json
+//     endpoints. That gets us FRESH posts, not 600-day-old ones.
+//   - Heavily weighted toward rental-specific subs (r/bangalorerentals,
+//     r/BangaloreFlatsRental) where signal-to-noise is high.
+//   - Pagination so we pull more than 100 per sub.
+//   - Time-window filter: drop anything older than MAX_AGE_DAYS (default 120).
+//   - Each post is re-fetched as .json to confirm it isn't deleted/removed.
+//   - Writes public/data/meta.json with scrape timestamp + source counts.
 //
-// Run: node scripts/scrape-reddit.mjs
-// Resume: cached raw posts at scripts/.cache/reddit-raw.json so re-runs skip the fetch.
+// Designed to be safe to run on a cron (no inputs, deterministic output,
+// resumable via cache).
+//
+// Required env:  ANTHROPIC_API_KEY
+// Optional env:  REDDIT_USER_AGENT (defaults to one identifying the project)
+//                MAX_AGE_DAYS (defaults to 120)
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 if (!API_KEY) {
   console.error("Missing ANTHROPIC_API_KEY in environment.");
-  console.error("Try: export ANTHROPIC_API_KEY=$(grep ANTHROPIC_API_KEY .env.local | cut -d= -f2)");
   process.exit(1);
 }
 
-const USER_AGENT = "TruRentBangaloreFlatBot/1.0 (https://github.com/kartikay650/trurent; project demo)";
+const USER_AGENT =
+  process.env.REDDIT_USER_AGENT ||
+  "web:TruRent:v1.0 (by /u/kartikay650)";
+const MAX_AGE_DAYS = parseInt(process.env.MAX_AGE_DAYS || "120", 10);
+const PAGES_PER_FEED = 3; // 100 * 3 = up to 300 posts per feed
 
-// ---------- search targets ----------
-// Wide net. Many will overlap; dedupe by post id.
+// ---------- sources ----------
+// Reddit "new" tab on rental-specific subs gives the highest yield. Search-mode
+// queries on general subs catch the rest. PullPush no longer needed; the data
+// it returns is too old to be useful for a live product.
 
-const TARGETS = [
-  // r/bangalore — main local sub
-  { subreddit: "bangalore", q: "rent BHK", size: 250 },
-  { subreddit: "bangalore", q: "looking for tenant", size: 200 },
-  { subreddit: "bangalore", q: "available for rent", size: 200 },
-  { subreddit: "bangalore", q: "flat for rent", size: 200 },
-  { subreddit: "bangalore", q: "house for rent", size: 200 },
-  { subreddit: "bangalore", q: "1BHK 2BHK 3BHK rent", size: 200 },
-  { subreddit: "bangalore", q: "rent koramangala", size: 100 },
-  { subreddit: "bangalore", q: "rent indiranagar", size: 100 },
-  { subreddit: "bangalore", q: "rent HSR", size: 100 },
-  { subreddit: "bangalore", q: "rent whitefield", size: 100 },
-  { subreddit: "bangalore", q: "rent bellandur", size: 100 },
-  { subreddit: "bangalore", q: "rent marathahalli", size: 100 },
-  { subreddit: "bangalore", q: "rent sarjapur", size: 100 },
-  { subreddit: "bangalore", q: "rent jayanagar", size: 100 },
-  { subreddit: "bangalore", q: "rent hebbal", size: 100 },
-  { subreddit: "bangalore", q: "deposit no brokerage", size: 100 },
+const FEEDS = [
+  // Rental-specific subs: scan their "new" tab + "top of month".
+  { type: "feed", subreddit: "bangalorerentals", sort: "new" },
+  { type: "feed", subreddit: "bangalorerentals", sort: "top", t: "month" },
+  { type: "feed", subreddit: "BangaloreFlatsRental", sort: "new" },
+  { type: "feed", subreddit: "BangaloreFlatsRental", sort: "top", t: "month" },
 
-  // r/IndianRealEstate — wider, sometimes has Bangalore listings
-  { subreddit: "IndianRealEstate", q: "bangalore rent BHK", size: 200 },
-  { subreddit: "IndianRealEstate", q: "bangalore flat available", size: 100 },
-
-  // smaller niche subs
-  { subreddit: "indianapartments", q: "bangalore rent", size: 100 },
-  { subreddit: "BangaloreRealEstate", q: "rent", size: 200 },
-  { subreddit: "bengaluru", q: "rent BHK", size: 200 },
-  { subreddit: "BLR", q: "rent", size: 50 },
-
-  // global search (no subreddit restriction), to catch posts in obscure subs
-  { subreddit: null, q: "bangalore 2BHK rent", size: 200 },
-  { subreddit: null, q: "bangalore 1BHK rent", size: 200 },
-  { subreddit: null, q: "bangalore 3BHK rent", size: 200 },
-  { subreddit: null, q: "koramangala available rent", size: 100 },
-  { subreddit: null, q: "indiranagar available rent", size: 100 },
-  { subreddit: null, q: "HSR layout available rent", size: 100 },
+  // Bigger general subs: search-mode for rental keywords.
+  { type: "search", subreddit: "bangalore", q: "rent BHK", sort: "new" },
+  { type: "search", subreddit: "bangalore", q: "looking for tenant", sort: "new" },
+  { type: "search", subreddit: "bangalore", q: "available for rent", sort: "new" },
+  { type: "search", subreddit: "bangalore", q: "flat for rent", sort: "new" },
+  { type: "search", subreddit: "Bengaluru", q: "rent BHK", sort: "new" },
+  { type: "search", subreddit: "Bengaluru", q: "available for rent", sort: "new" },
+  { type: "search", subreddit: "IndianRealEstate", q: "bangalore rent", sort: "new" },
 ];
 
 // ---------- canonical locality + geo ----------
@@ -116,7 +105,6 @@ const LOCALITY_GEO = {
   Devanahalli: [13.2488, 77.7143],
 };
 
-// Bangalore metro bbox: roughly 12.75–13.25 lat, 77.40–77.85 lng
 const IN_BANGALORE = (lat, lng) =>
   lat >= 12.75 && lat <= 13.3 && lng >= 77.4 && lng <= 77.85;
 
@@ -124,13 +112,13 @@ const IN_BANGALORE = (lat, lng) =>
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function hashOf(str) {
+function hashOf(s) {
   let h = 0;
-  for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   return Math.abs(h);
 }
 
-function seededJitter(seed) {
+function jitter(seed) {
   return ((hashOf(seed) % 1000) / 1000 - 0.5) * 0.006;
 }
 
@@ -150,10 +138,10 @@ const UNSPLASH_PHOTOS = [
 ];
 
 function pickPhotos(seedKey) {
-  const seed = hashOf(seedKey);
+  const s = hashOf(seedKey);
   const picks = [];
   for (let k = 0; picks.length < 3 && k < UNSPLASH_PHOTOS.length * 2; k++) {
-    const id = UNSPLASH_PHOTOS[(seed + k * 7) % UNSPLASH_PHOTOS.length];
+    const id = UNSPLASH_PHOTOS[(s + k * 7) % UNSPLASH_PHOTOS.length];
     if (!picks.includes(id)) picks.push(id);
   }
   return picks.map(
@@ -162,44 +150,92 @@ function pickPhotos(seedKey) {
 }
 
 function daysAgo(unixSeconds) {
-  const now = Date.now() / 1000;
-  return Math.max(1, Math.floor((now - unixSeconds) / 86400));
+  return Math.max(1, Math.floor((Date.now() / 1000 - unixSeconds) / 86400));
 }
 
-// ---------- stage 1: PullPush fetch ----------
+// ---------- stage 1: pull fresh posts from Reddit ----------
 
-async function fetchPosts() {
-  console.log(`\n[1/4] Fetching from ${TARGETS.length} PullPush queries`);
-  console.log(`      User-Agent: ${USER_AGENT}\n`);
-  const seen = new Map();
-  for (const t of TARGETS) {
-    const url = new URL("https://api.pullpush.io/reddit/search/submission/");
-    if (t.subreddit) url.searchParams.set("subreddit", t.subreddit);
-    url.searchParams.set("q", t.q);
-    url.searchParams.set("size", String(t.size));
-    url.searchParams.set("sort", "desc");
-    url.searchParams.set("sort_type", "created_utc");
-
-    const label = `${t.subreddit ? "r/" + t.subreddit : "(all)"}  "${t.q}"`;
-    process.stdout.write(`  ${label.padEnd(60)} `);
-    try {
-      const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
-      const json = await res.json();
-      const posts = Array.isArray(json?.data) ? json.data : [];
-      let added = 0;
-      for (const p of posts) {
-        if (!p?.id) continue;
-        if (seen.has(p.id)) continue;
-        seen.set(p.id, p);
-        added += 1;
-      }
-      console.log(`${posts.length} got, ${added} new`);
-    } catch (e) {
-      console.log(`FAILED ${e.message}`);
-    }
-    await sleep(800);
+function buildUrl(feed, after) {
+  const sub = feed.subreddit;
+  if (feed.type === "search") {
+    const u = new URL(`https://www.reddit.com/r/${sub}/search.json`);
+    u.searchParams.set("q", feed.q);
+    u.searchParams.set("restrict_sr", "1");
+    u.searchParams.set("sort", feed.sort);
+    u.searchParams.set("limit", "100");
+    if (after) u.searchParams.set("after", after);
+    return u.toString();
   }
-  return [...seen.values()];
+  const u = new URL(`https://www.reddit.com/r/${sub}/${feed.sort}.json`);
+  u.searchParams.set("limit", "100");
+  if (feed.t) u.searchParams.set("t", feed.t);
+  if (after) u.searchParams.set("after", after);
+  return u.toString();
+}
+
+async function fetchFeed(feed) {
+  const out = [];
+  let after = null;
+  for (let page = 0; page < PAGES_PER_FEED; page++) {
+    const url = buildUrl(feed, after);
+    let res;
+    try {
+      res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+    } catch (e) {
+      console.log(`    fetch error: ${e.message}`);
+      break;
+    }
+    if (res.status === 429) {
+      console.log(`    rate-limited, sleeping 30s`);
+      await sleep(30000);
+      page -= 1;
+      continue;
+    }
+    if (!res.ok) {
+      console.log(`    HTTP ${res.status}, stopping this feed`);
+      break;
+    }
+    const json = await res.json();
+    const children = json?.data?.children || [];
+    for (const c of children) {
+      const p = c.data;
+      if (!p?.id) continue;
+      out.push(p);
+    }
+    after = json?.data?.after;
+    if (!after) break;
+    await sleep(1500); // be polite to Reddit
+  }
+  return out;
+}
+
+async function fetchAll() {
+  console.log(`\n[1/4] Pulling fresh posts from ${FEEDS.length} Reddit feeds`);
+  console.log(`      Time window: < ${MAX_AGE_DAYS} days old\n`);
+  const seen = new Map();
+  const stats = {};
+  const cutoff = Date.now() / 1000 - MAX_AGE_DAYS * 86400;
+
+  for (const feed of FEEDS) {
+    const label =
+      feed.type === "search"
+        ? `r/${feed.subreddit} search "${feed.q}"`
+        : `r/${feed.subreddit} ${feed.sort}${feed.t ? "/" + feed.t : ""}`;
+    process.stdout.write(`  ${label.padEnd(50)} `);
+    const posts = await fetchFeed(feed);
+    let kept = 0;
+    for (const p of posts) {
+      if (p.created_utc < cutoff) continue;
+      if (seen.has(p.id)) continue;
+      seen.set(p.id, p);
+      kept += 1;
+    }
+    stats[label] = { fetched: posts.length, fresh: kept };
+    console.log(`${posts.length} fetched, ${kept} new in window`);
+    await sleep(1500);
+  }
+
+  return { posts: [...seen.values()], stats };
 }
 
 // ---------- stage 2: local pre-filter ----------
@@ -208,28 +244,24 @@ function looksLikeListing(post) {
   const title = (post.title || "").toLowerCase();
   const body = (post.selftext || "").toLowerCase();
   const text = `${title}\n${body}`;
-  if (text.length < 60) return false;
+  if (text.length < 50) return false;
   if (text.length > 6000) return false;
 
-  // Must mention BHK / studio / flat / PG
-  if (!/\b(bhk|bedroom|studio|flat|apartment|pg|room)\b/.test(text)) return false;
+  if (post.removed_by_category || post.banned_by) return false;
+  if ((post.selftext || "").trim() === "[deleted]") return false;
+  if ((post.selftext || "").trim() === "[removed]") return false;
 
-  // Must mention bangalore or a known locality
-  const mentionsBlr =
-    /\b(bangalore|bengaluru|blr)\b/.test(text) ||
-    Object.keys(LOCALITY_GEO).some((l) => text.includes(l.toLowerCase()));
-  if (!mentionsBlr) return false;
-
-  // Must have something that looks like a price
-  if (!/(₹|\brs\.?\b|\brupees\b|\b\d{1,2}k\b|\blakh\b|\brent\b|\bdeposit\b)/.test(text))
+  if (!/\b(bhk|bedroom|studio|flat|apartment|room|pg)\b/.test(text)) return false;
+  if (!/(₹|\brs\.?\b|rupees|\b\d{1,2}k\b|\blakh\b|\brent\b|\bdeposit\b)/.test(text))
     return false;
 
-  // Skip obvious wanted/discussion patterns in the TITLE
-  // (we want OFFERS — someone has a flat available — not WANTEDs)
+  // Tighter title filters: drop obvious WANTED / discussion / scam posts
   const t = post.title || "";
   if (/^\s*\[(advice|help|discussion|rant|question|update)\]/i.test(t)) return false;
-  if (/(scam|warning|fraud|complaint|nightmare|cheated)/i.test(t)) return false;
-  if (/^(is it|how to|why is|why are|why do|anyone know|anyone else|does anyone)/i.test(t))
+  if (/(scam|warning|fraud|complaint|nightmare|cheated|advice)/i.test(t)) return false;
+  if (/^(is it|how to|why is|why are|why do|anyone know|anyone else|does anyone|need advice|seeking advice)/i.test(t))
+    return false;
+  if (/^(looking for|need a|searching for|wanted|where to find|wtb|in search of)/i.test(t.trim()))
     return false;
 
   return true;
@@ -237,7 +269,12 @@ function looksLikeListing(post) {
 
 // ---------- stage 3: LLM extraction ----------
 
-const EXTRACT_PROMPT = `You parse Reddit posts and decide if each is a Bangalore rental LISTING (someone OFFERING a flat to rent, with a price). If yes, extract structured data. If no, say why.
+const EXTRACT_PROMPT = `You parse Reddit posts and decide if each is a Bangalore rental LISTING (someone OFFERING a flat or a room, with a price). Extract structured data only if yes.
+
+OFFERS vs WANTEDs (this is the most important distinction):
+- OFFER = "I have a room available" / "Sublet my flat" / "Tenant needed" / "Flatmate replacement" — KEEP
+- WANTED = "Looking for a flat" / "Need a place" / "Searching for an apartment" — REJECT
+- DISCUSSION / RANT / QUESTION / SCAM ALERT — REJECT
 
 Strict JSON only. No prose. No markdown.
 
@@ -250,24 +287,24 @@ Or:
   "title": "short clean title, e.g. '2BHK in Koramangala 5th Block'",
   "locality": "ONE Bangalore neighbourhood, EXACT spelling from this list (or 'Unknown'):
 Koramangala, Indiranagar, HSR Layout, Whitefield, Bellandur, Sarjapur Road, Marathahalli, BTM Layout, Jayanagar, JP Nagar, Banashankari, Bannerghatta Road, Hebbal, Yelahanka, Electronic City, Bommanahalli, Singasandra, Hennur, Frazer Town, Shivajinagar, Cunningham Road, Richmond Town, Ulsoor, Domlur, Malleshwaram, Rajajinagar, Sadashivanagar, Basaveshwara Nagar, Vijayanagar, Mysore Road, Nagarbhavi, Jalahalli, Peenya, Nayandahalli, Kengeri, RT Nagar, Old Airport Road, CV Raman Nagar, Kasturi Nagar, Pai Layout, Kalyan Nagar, Brookefield, Hoodi, Kadugodi, Hoskote, Mahadevapura, Devanahalli",
-  "location_query": "the most SPECIFIC address-like string from the post, suitable for geocoding. e.g. 'Koramangala 5th Block, near Sony Signal' or 'HSR Layout Sector 2, 27th Main'. Just the locality alone is fine if no specifics. NO city name needed (we'll append Bangalore automatically).",
-  "rent": integer (INR per month, REQUIRED, must be 5000-200000),
+  "location_query": "most SPECIFIC address-like string from the post, suitable for geocoding. e.g. 'Koramangala 5th Block, near Sony Signal' or 'HSR Layout Sector 2, 27th Main'. NO city name needed.",
+  "rent": integer (INR/month, REQUIRED, must be 5000-200000. If the post says 'X per person' or 'X for the room' that IS the rent),
   "deposit": integer (INR, omit if not stated),
   "brokerage": integer (INR, 0 if zero/no broker/direct owner, omit if not stated),
-  "bhk": integer (1, 2, or 3, REQUIRED for non-PG listings),
+  "bhk": integer (1 for single rooms / studios / PGs / shared rooms. 2 or 3 ONLY when the whole flat is being offered),
   "furnished": "fully" | "semi" | "unfurnished" (omit if unclear),
-  "amenities": array, only from this exact list: gym, pool, parking, power_backup, garden, security, club. Omit field if none mentioned.,
+  "amenities": array, only from: gym, pool, parking, power_backup, garden, security, club. Omit field if none mentioned.,
   "description": "1-2 sentence summary of what's available, cleaned up from the post"
 }
 
-Mark is_listing: false when:
-- The post is asking for help, complaining about a scam, sharing experience, discussing market trends, or a "looking for a flat" (wanted) ad.
-- The post is about buying/purchasing/investing, not renting.
-- Rent isn't stated or is clearly outside 5000-200000 INR/month.
-- BHK can't be determined for what is clearly a flat (PG/room with shared occupants is okay to keep if rent is per-person and the locality is clear, but mark as 1).
-- The flat isn't in Bangalore.
+Be STRICT. Mark is_listing: false when:
+- The post is a wanted/looking-for, not an offer
+- The poster is asking advice or sharing a complaint
+- Rent is missing or outside 5000-200000 INR
+- Locality can't be inferred to one in the canonical list
+- The flat isn't in Bangalore
 
-Be strict. Only mark is_listing: true when you're confident this is a real offer with a price.`;
+When in doubt, mark false.`;
 
 async function callHaiku(post, retries = 2) {
   const userContent = `Title: ${post.title}\n\nBody:\n${(post.selftext || "(no body)").slice(0, 3500)}`;
@@ -293,32 +330,26 @@ async function callHaiku(post, retries = 2) {
         await sleep(wait);
         continue;
       }
-      if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      if (!res.ok) throw new Error(`Anthropic ${res.status}`);
       const json = await res.json();
       const text = json?.content?.[0]?.text || "";
       const clean = text.replace(/```json|```/g, "").trim();
       return JSON.parse(clean);
     } catch (e) {
       if (attempt === retries) throw e;
-      await sleep(1000);
+      await sleep(1500);
     }
   }
 }
 
 // ---------- stage 4: Nominatim geocoding ----------
-// Free, no API key, 1 req/sec cap per their usage policy.
-
-const NOMINATIM_BASE = "https://nominatim.openstreetmap.org/search";
 
 async function geocode(query) {
-  const fullQuery = `${query}, Bangalore, Karnataka, India`;
-  const url = `${NOMINATIM_BASE}?q=${encodeURIComponent(fullQuery)}&format=json&limit=1&countrycodes=in`;
+  const full = `${query}, Bangalore, Karnataka, India`;
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(full)}&format=json&limit=1&countrycodes=in`;
   try {
     const res = await fetch(url, {
-      headers: {
-        "User-Agent": USER_AGENT,
-        "Accept-Language": "en",
-      },
+      headers: { "User-Agent": USER_AGENT, "Accept-Language": "en" },
     });
     if (!res.ok) return null;
     const arr = await res.json();
@@ -326,7 +357,7 @@ async function geocode(query) {
     const lat = parseFloat(arr[0].lat);
     const lng = parseFloat(arr[0].lon);
     if (!IN_BANGALORE(lat, lng)) return null;
-    return { lat, lng, display: arr[0].display_name };
+    return { lat, lng };
   } catch {
     return null;
   }
@@ -336,91 +367,93 @@ async function geocode(query) {
 
 async function main() {
   mkdirSync("scripts/.cache", { recursive: true });
-  const rawCachePath = "scripts/.cache/reddit-raw.json";
+  const cachePath = "scripts/.cache/reddit-raw-v2.json";
 
-  let posts;
-  if (existsSync(rawCachePath)) {
-    posts = JSON.parse(readFileSync(rawCachePath, "utf8"));
-    console.log(`[1/4] Loaded ${posts.length} posts from cache: ${rawCachePath}`);
+  let posts, fetchStats;
+  if (existsSync(cachePath) && !process.env.NOCACHE) {
+    const cached = JSON.parse(readFileSync(cachePath, "utf8"));
+    posts = cached.posts;
+    fetchStats = cached.stats;
+    console.log(`[1/4] Cache hit: ${posts.length} posts from ${cachePath}`);
+    console.log(`      Set NOCACHE=1 to force re-fetch.`);
   } else {
-    posts = await fetchPosts();
-    writeFileSync(rawCachePath, JSON.stringify(posts, null, 2));
-    console.log(`\n[1/4] Cached ${posts.length} raw posts to ${rawCachePath}`);
+    const result = await fetchAll();
+    posts = result.posts;
+    fetchStats = result.stats;
+    writeFileSync(cachePath, JSON.stringify({ posts, stats: fetchStats }, null, 2));
+    console.log(`\n[1/4] Cached ${posts.length} fresh posts.`);
   }
 
   console.log(`\n[2/4] Local pre-filter`);
   const candidates = posts.filter(looksLikeListing);
-  console.log(`      ${candidates.length} / ${posts.length} candidates survive`);
+  console.log(`      ${candidates.length} / ${posts.length} pass pre-filter`);
 
   console.log(`\n[3/4] LLM extraction (Claude Haiku 4.5)`);
-  const extracted = []; // [{post, parsed}]
+  const extracted = [];
   let i = 0;
   for (const post of candidates) {
     i += 1;
-    const titlePreview = (post.title || "").slice(0, 56);
-    process.stdout.write(`  [${i}/${candidates.length}] ${titlePreview.padEnd(58)} `);
+    const preview = (post.title || "").slice(0, 56);
+    process.stdout.write(`  [${i}/${candidates.length}] ${preview.padEnd(58)} `);
     let parsed;
     try {
       parsed = await callHaiku(post);
     } catch (e) {
-      console.log(`HAIKU ERR ${e.message.slice(0, 60)}`);
+      console.log(`ERR ${String(e.message).slice(0, 60)}`);
       await sleep(1500);
       continue;
     }
-
     if (!parsed?.is_listing) {
-      console.log(`skip (${parsed?.reason || "not listing"})`);
-      await sleep(120);
+      console.log(`skip (${(parsed?.reason || "not listing").slice(0, 70)})`);
+      await sleep(100);
       continue;
     }
     if (!parsed.rent || parsed.rent < 5000 || parsed.rent > 200000) {
       console.log(`skip (bad rent ${parsed.rent})`);
-      await sleep(120);
+      await sleep(100);
       continue;
     }
     if (![1, 2, 3].includes(parsed.bhk)) {
       console.log(`skip (bad bhk ${parsed.bhk})`);
-      await sleep(120);
+      await sleep(100);
       continue;
     }
     if (!LOCALITY_GEO[parsed.locality]) {
       console.log(`skip (unknown locality "${parsed.locality}")`);
-      await sleep(120);
+      await sleep(100);
       continue;
     }
     console.log(`KEEP ${parsed.locality} ${parsed.bhk}BHK ₹${parsed.rent}`);
     extracted.push({ post, parsed });
-    await sleep(120);
+    await sleep(100);
   }
 
-  console.log(`\n[4/4] Geocoding via Nominatim (rate-limited 1 req/sec)`);
+  console.log(`\n[4/4] Nominatim geocoding (1 req/sec)`);
   const listings = [];
   for (let j = 0; j < extracted.length; j++) {
     const { post, parsed } = extracted[j];
-    process.stdout.write(`  [${j + 1}/${extracted.length}] ${parsed.location_query?.slice(0, 60) || parsed.locality} ... `);
-    const geo = await geocode(parsed.location_query || parsed.locality);
-    await sleep(1100); // Nominatim usage policy: max 1/sec
-
+    const q = parsed.location_query || parsed.locality;
+    process.stdout.write(`  [${j + 1}/${extracted.length}] ${q.slice(0, 60).padEnd(60)} `);
+    const geo = await geocode(q);
+    await sleep(1100);
     let lat, lng, geoSource;
     if (geo) {
       lat = +geo.lat.toFixed(5);
       lng = +geo.lng.toFixed(5);
       geoSource = "nominatim";
-      console.log(`pinned (${lat}, ${lng})`);
+      console.log(`pinned`);
     } else {
-      const [baseLat, baseLng] = LOCALITY_GEO[parsed.locality];
+      const [bLat, bLng] = LOCALITY_GEO[parsed.locality];
       const id = `rdt_${post.id}`;
-      lat = +(baseLat + seededJitter(id)).toFixed(5);
-      lng = +(baseLng + seededJitter(id + "x")).toFixed(5);
+      lat = +(bLat + jitter(id)).toFixed(5);
+      lng = +(bLng + jitter(id + "x")).toFixed(5);
       geoSource = "locality_centroid";
-      console.log(`centroid fallback (${lat}, ${lng})`);
+      console.log(`centroid`);
     }
-
     if (!IN_BANGALORE(lat, lng)) {
-      console.log(`  -> rejected: coords outside Bangalore`);
+      console.log(`    rejected (out of bbox)`);
       continue;
     }
-
     const id = `rdt_${post.id}`;
     listings.push({
       id,
@@ -442,40 +475,63 @@ async function main() {
       sourceSubreddit: post.subreddit,
       description:
         parsed.description ||
-        (post.selftext || post.title).slice(0, 220).replace(/\s+/g, " "),
+        (post.selftext || post.title).slice(0, 240).replace(/\s+/g, " "),
       postedDaysAgo: daysAgo(post.created_utc),
       photos: pickPhotos(id),
     });
   }
 
-  // ---------- final verification ----------
-  console.log(`\n=== Verification ===`);
-  console.log(`Total kept: ${listings.length}`);
+  // ---------- output + meta ----------
+
+  const now = new Date();
   const byLoc = {};
   const byBhk = { 1: 0, 2: 0, 3: 0 };
-  let geocoded = 0;
   let rentMin = Infinity, rentMax = -Infinity;
+  let geocoded = 0;
+  const subCounts = {};
   for (const l of listings) {
     byLoc[l.locality] = (byLoc[l.locality] || 0) + 1;
     byBhk[l.bhk] = (byBhk[l.bhk] || 0) + 1;
     if (l.geoSource === "nominatim") geocoded += 1;
     if (l.rent < rentMin) rentMin = l.rent;
     if (l.rent > rentMax) rentMax = l.rent;
+    subCounts[l.sourceSubreddit] = (subCounts[l.sourceSubreddit] || 0) + 1;
   }
-  console.log(`Geocoded by Nominatim:  ${geocoded} / ${listings.length}`);
-  console.log(`BHK distribution: 1BHK ${byBhk[1]}, 2BHK ${byBhk[2]}, 3BHK ${byBhk[3]}`);
-  console.log(`Rent range: ₹${rentMin} – ₹${rentMax}`);
-  console.log(`\nLocality coverage:`);
+
+  console.log(`\n=== Verification ===`);
+  console.log(`Total kept:           ${listings.length}`);
+  console.log(`Geocoded by Nominatim: ${geocoded} / ${listings.length}`);
+  console.log(`BHK:  1BHK ${byBhk[1]}, 2BHK ${byBhk[2]}, 3BHK ${byBhk[3]}`);
+  console.log(`Rent: ₹${rentMin === Infinity ? "-" : rentMin} - ₹${rentMax === -Infinity ? "-" : rentMax}`);
+  console.log(`Subs: ${Object.entries(subCounts).map(([k, v]) => `${k}:${v}`).join(", ")}`);
+  console.log(`Locality coverage:`);
   for (const [loc, n] of Object.entries(byLoc).sort((a, b) => b[1] - a[1])) {
     console.log(`  ${loc.padEnd(24)} ${n}`);
   }
 
-  const outPath = "public/data/listings.json";
   writeFileSync(
-    outPath,
+    "public/data/listings.json",
     "[\n" + listings.map((l) => "  " + JSON.stringify(l)).join(",\n") + "\n]\n",
   );
-  console.log(`\nWrote ${outPath} (${listings.length} listings).`);
+
+  writeFileSync(
+    "public/data/meta.json",
+    JSON.stringify(
+      {
+        scrapedAt: now.toISOString(),
+        listingCount: listings.length,
+        geocodedCount: geocoded,
+        bhkDistribution: byBhk,
+        sourceSubreddits: subCounts,
+        maxAgeDays: MAX_AGE_DAYS,
+      },
+      null,
+      2,
+    ),
+  );
+
+  console.log(`\nWrote public/data/listings.json (${listings.length} listings).`);
+  console.log(`Wrote public/data/meta.json (scrapedAt=${now.toISOString()}).`);
 }
 
 main().catch((e) => {

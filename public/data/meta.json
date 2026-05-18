@@ -1,0 +1,16 @@
+{
+  "scrapedAt": "2026-05-18T22:25:28.867Z",
+  "listingCount": 131,
+  "geocodedCount": 5,
+  "bhkDistribution": {
+    "1": 85,
+    "2": 22,
+    "3": 24
+  },
+  "sourceSubreddits": {
+    "bangalorerentals": 98,
+    "BangaloreFlatsRental": 32,
+    "Bengaluru": 1
+  },
+  "maxAgeDays": 120
+}

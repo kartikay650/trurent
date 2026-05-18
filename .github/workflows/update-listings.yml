@@ -1,0 +1,60 @@
+# Refresh the listings.json daily by re-running the Reddit scraper.
+# Commits the updated dataset back to main, which triggers a Vercel redeploy.
+#
+# Needs one repo secret: ANTHROPIC_API_KEY (Settings -> Secrets and variables
+# -> Actions -> New repository secret).
+
+name: Refresh listings
+
+on:
+  # 03:00 IST every day = 21:30 UTC the previous day.
+  schedule:
+    - cron: "30 21 * * *"
+  # Allow manual trigger from the Actions tab.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-listings
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run scraper
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REDDIT_USER_AGENT: "github-actions:TruRent:v1.0 (by /u/kartikay650)"
+          MAX_AGE_DAYS: "120"
+          NOCACHE: "1"
+        run: node scripts/scrape-reddit.mjs
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "TruRent auto-scraper"
+          git config user.email "auto@trurent.local"
+          git add public/data/listings.json public/data/meta.json
+          if git diff --cached --quiet; then
+            echo "Nothing changed. Skipping commit."
+            exit 0
+          fi
+          # Pull the count from meta.json for the commit message
+          COUNT=$(node -e "console.log(require('./public/data/meta.json').listingCount)")
+          git commit -m "Auto-refresh listings: ${COUNT} from Reddit"
+          git push

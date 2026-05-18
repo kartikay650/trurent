@@ -65,11 +65,24 @@ const AMENITY_LABEL = {
   club: "Club house",
 };
 
+function relativeTimeFrom(iso) {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  const mins = Math.max(1, Math.round((now - then) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+}
+
 export default function Home() {
   const [allListings, setAllListings] = useState([]);
   const [filters, setFilters] = useState({});
   const [selectedListing, setSelectedListing] = useState(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [meta, setMeta] = useState(null);
 
   useEffect(() => {
     fetch("/data/listings.json")
@@ -79,6 +92,12 @@ export default function Home() {
         setIsLoaded(true);
       })
       .catch(() => setIsLoaded(true));
+
+    // Optional sibling file; absence is fine (older builds didn't have it).
+    fetch("/data/meta.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((m) => m && setMeta(m))
+      .catch(() => {});
   }, []);
 
   const filteredListings = useMemo(
@@ -341,6 +360,33 @@ export default function Home() {
               <FilterPanel filters={filters} setFilters={setFilters} />
             </span>
           </div>
+
+          {/* "Updated Xh ago" line — only when meta.json is available */}
+          {meta?.scrapedAt && (
+            <div
+              title={`${meta.listingCount} listings scraped from Reddit at ${meta.scrapedAt}`}
+              style={{
+                marginTop: -6,
+                fontSize: 11,
+                color: "var(--text-tertiary)",
+                letterSpacing: "0.04em",
+                fontFamily: "var(--font-dm-sans), sans-serif",
+              }}
+            >
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "#16A34A",
+                  marginRight: 6,
+                  verticalAlign: "middle",
+                }}
+              />
+              Live from Reddit · updated {relativeTimeFrom(meta.scrapedAt)}
+            </div>
+          )}
 
           {/* Filter chips */}
           {chips.length > 0 && (

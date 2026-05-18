@@ -5,7 +5,7 @@
 > **Live demo:** [trurent-five.vercel.app](https://trurent-five.vercel.app/)
 > **Submission:** Activate AI Fellowship 2026
 
-A streaming AI agent that turns plain English into a structured Bangalore flat search, running over **39 real rental listings scraped from Reddit posts** (r/bangalore, r/bangalorerentals, r/Bengaluru, etc.). Built in about 10 hours for the Activate AI Fellowship application.
+A streaming AI agent that turns plain English into a structured Bangalore flat search, running over **131 real rental listings scraped fresh from Reddit** (r/bangalorerentals, r/BangaloreFlatsRental, r/Bengaluru) and refreshed daily by an automated GitHub Actions cron. Built for the Activate AI Fellowship application.
 
 You type something like *"2BHK in Koramangala under 30k"* and the agent builds a structured filter, runs it, and the map zooms in. If you follow up with *"which has a gym?"*, it remembers everything you said before and adds the new filter. Every listing links back to its original Reddit post so you can actually contact the person who posted it.
 
@@ -33,7 +33,7 @@ Try these in order. Each one shows off something different the agent does:
    It knows we're Bangalore-only and politely redirects. Doesn't waste a tool call.
 
 6. **`Show me everything`**
-   Resets, shows all 39 real listings, gives a written breakdown by BHK and price.
+   Resets, shows all 131 real listings, gives a written breakdown by BHK and price.
 
 ---
 
@@ -128,9 +128,11 @@ Real users mistype. A flow that says "Koramangla isn't a place, did you mean Kor
 
 NoBroker, MagicBricks, and 99acres all explicitly prohibit scraping in their terms of service. Their listing photos are copyrighted by individual owners. Ingesting their data into a product positioned as "skip the brokers" is exactly the kind of thing their legal teams pursue. So I sourced from Reddit instead.
 
-Reddit posts in subs like r/bangalorerentals, r/bangalore, and r/Bengaluru are public content posted by individuals offering their flats directly. The PullPush archive API surfaces them without violating Reddit's ToS (public read access is allowed). Each listing in the dataset links back to its original Reddit post so renters can contact the owner directly.
+Reddit posts in subs like r/bangalorerentals (49k subscribers) and r/BangaloreFlatsRental (11k) are public content posted by individuals offering their flats directly. Reddit's own public JSON endpoints surface them, no auth or ToS violation needed. Each listing in the dataset links back to its original Reddit post so renters can contact the owner directly.
 
-The trade-off: Reddit is not a dense rental marketplace. Out of 1,412 posts scraped, only ~600 passed a local pre-filter and Claude Haiku 4.5 confirmed 39 as actual listings. The rest were complaints, broker scam stories, "wanted" ads, and market discussions. That's a 2.8% yield. A production version would integrate a real-listings API (partner agreement) or build owner-direct uploads, like NoBroker's actual model.
+The pipeline pulls from 11 subreddit+query combinations, filters for posts under 120 days old, and runs each candidate through Claude Haiku 4.5 with a strict "offer vs wanted" prompt. Out of 1,026 fresh posts scraped, 131 are confirmed listings — a 13% yield, ~5x what the old PullPush-based pipeline produced. The rest are wanted ads, complaints, market discussions, or scam alerts.
+
+The dataset auto-refreshes every day at 3am IST via a GitHub Actions cron job that re-runs the scraper and commits any changes. Vercel auto-redeploys on every commit, so the live site always has the latest listings.
 
 ### Why the pipeline matters more than the data count
 
@@ -179,12 +181,12 @@ No state management library, no UI kit, no auth. Roughly 1000 lines of applicati
 
 ## Honest limitations
 
-- **39 real listings.** A production version needs orders of magnitude more. Many niche queries hit zero. The scrape yield off Reddit was 2.8% (1,412 posts → 39 keeps).
-- **Most listings are 400-600 days old.** PullPush gave us archival posts; the flats themselves are probably long-rented. The data is real (you can click each one to verify) but not current. A live version would need a continuous scrape against fresh Reddit posts.
-- **BHK is heavily skewed to 1BHK** (28 / 39). That's because most Reddit posts are "room in a shared 3BHK" listings rather than whole-flat rentals. It's a real Bangalore pattern, not a data artifact.
-- **Geocoding hit rate is moderate.** Of 39 listings, 6 got pixel-precise coordinates from Nominatim; the other 33 fell back to the neighbourhood centroid + small jitter. Real addresses in Reddit posts are often vague.
-- **No real commute calculation.** "Which has the shortest commute" works via locality reasoning, but there's no actual distance or time math.
-- **About 12 Unsplash photos rotate across 39 listings**, so several listings share the same hero.
+- **131 real listings, refreshed daily.** A production version still needs orders of magnitude more. Some niche queries hit zero (e.g. "Banashankari 3BHK with pool").
+- **Coverage skews to ORR + Whitefield.** Top localities are Sarjapur Road (17), Whitefield (12), Indiranagar (12), Bellandur (11), Mahadevapura (11), HSR Layout (9), Koramangala (7). South Bangalore (Banashankari, Jayanagar) is sparse because that's where Reddit usage is sparse.
+- **BHK is skewed to 1BHK** (85 / 131). Most posts on r/bangalorerentals are flatmate-replacement listings where a single room in a 2/3BHK is being offered. The rent is per-room and Haiku correctly maps these to 1BHK. It's a real Bangalore renting pattern, not a data artifact.
+- **Geocoding hit rate is low** (5 / 131 listings pinned by Nominatim). Reddit posts often reference apartment-complex names ("Sobha Hibiscus", "Mantri Premero", "Purva Sunshine") that OpenStreetMap doesn't index. The rest fall back to the neighbourhood centroid + small jitter, so the map still spreads pins reasonably.
+- **No real commute calculation.** "Which has the shortest commute to Manyata" works via locality reasoning, but there's no actual distance or time math.
+- **About 12 Unsplash photos rotate** across all listings, so several share the same hero shot.
 - **No marker clustering at extreme zoom-out.**
 
 ---
@@ -220,12 +222,16 @@ components/
 lib/
   filterListings.js     The filter, fuzzy locality matcher, normalizers.
 public/data/
-  listings.json         39 real Bangalore rental listings scraped from Reddit.
+  listings.json         131 real Bangalore rental listings scraped from Reddit.
+  meta.json             Scrape timestamp, listing count, source breakdown.
 scripts/
-  scrape-reddit.mjs     The pipeline: PullPush fetch -> local filter -> Haiku
+  scrape-reddit.mjs     The pipeline: Reddit JSON fetch -> local filter -> Haiku
                         extraction -> Nominatim geocoding -> listings.json.
   gen-listings.mjs      (Unused after the Reddit pivot.) Seeded synthetic
                         dataset generator. Kept for reference.
   add-photos.mjs        (Unused after the Reddit pivot.) Adds Unsplash photos.
   test-filters.mjs      Smoke tests for the filter (15 cases).
+.github/workflows/
+  update-listings.yml   Daily cron that re-runs the scraper and commits any
+                        changes back to main. Vercel auto-redeploys.
 ```
