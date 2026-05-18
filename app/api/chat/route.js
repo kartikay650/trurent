@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { filterListings, localityMatches } from "@/lib/filterListings";
+import { rateLimit, clientIp } from "@/lib/rateLimit";
 
 // ---- Listings loaded once at module load. Turbopack reloads this on JSON edits. ----
 let LISTINGS = [];
@@ -581,6 +582,30 @@ export async function POST(req) {
     );
   }
 
+  // Rate limit: 20 chat requests per IP per minute. Generous enough for an
+  // engaged user, tight enough to block abuse / accidental loops.
+  const ip = clientIp(req);
+  const limit = rateLimit(`chat:${ip}`, { limit: 20, windowMs: 60_000 });
+  if (!limit.allowed) {
+    return new Response(
+      JSON.stringify({
+        type: "text_delta",
+        text: `You're sending messages too fast. Try again in ${Math.ceil(limit.retryAfterMs / 1000)}s.`,
+      }) +
+        "\n" +
+        JSON.stringify({ type: "done" }) +
+        "\n",
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/x-ndjson",
+          "X-RateLimit-Remaining": "0",
+          "Retry-After": String(Math.ceil(limit.retryAfterMs / 1000)),
+        },
+      },
+    );
+  }
+
   let body;
   try {
     body = await req.json();
@@ -595,6 +620,20 @@ export async function POST(req) {
   }
 
   const messages = Array.isArray(body?.messages) ? body.messages : [];
+
+  // Cap message size to prevent prompt-injection attempts via huge payloads.
+  if (JSON.stringify(messages).length > 50_000) {
+    return new Response(
+      JSON.stringify({
+        type: "text_delta",
+        text: "Your message is too long. Try a shorter query.",
+      }) +
+        "\n" +
+        JSON.stringify({ type: "done" }) +
+        "\n",
+      { headers: { "Content-Type": "application/x-ndjson" } },
+    );
+  }
 
   return new Response(
     ndjsonStream((send) => runAgentLoop(messages, send, apiKey)),
