@@ -1,4 +1,5 @@
 import { DM_Sans, Playfair_Display, DM_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -34,7 +35,10 @@ export default function RootLayout({ children }) {
       className={`${dmSans.variable} ${playfair.variable} ${dmMono.variable}`}
       style={{ background: "#F6F4EF", colorScheme: "light" }}
     >
-      <body>{children}</body>
+      <body>
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }
