@@ -95,6 +95,9 @@ export default function ListingCard({ listing, onClose }) {
         @media (max-width: 768px) {
           .trurent-card-outer {
             width: 100vw !important;
+            max-height: 85dvh !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch;
           }
           .trurent-card-inner {
             padding: 16px 16px 24px !important;

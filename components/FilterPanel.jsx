@@ -196,6 +196,9 @@ export default function FilterPanel({ filters, setFilters }) {
           left: 0;
           width: 340px;
           max-width: calc(100vw - 40px);
+          max-height: calc(100dvh - 120px);
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
           background: rgba(255,255,255,0.96);
           backdrop-filter: blur(24px) saturate(140%);
           -webkit-backdrop-filter: blur(24px) saturate(140%);
@@ -205,6 +208,12 @@ export default function FilterPanel({ filters, setFilters }) {
           z-index: 35;
           font-family: var(--font-dm-sans), sans-serif;
           box-shadow: 0 8px 24px rgba(28,27,24,0.10);
+        }
+        @media (max-width: 768px) {
+          .trurent-fp-panel {
+            width: calc(100vw - 24px);
+            left: -8px;
+          }
         }
         .trurent-fp-row { margin-bottom: 14px; }
         .trurent-fp-row:last-child { margin-bottom: 0; }

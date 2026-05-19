@@ -93,10 +93,15 @@ function MapController({ listings, selectedId, onSelectListing }) {
 
   // Fit map bounds to the currently-shown listings so a "Koramangala" search
   // visibly zooms into Koramangala, while "show me everything" zooms back out
-  // to all of Bangalore. Skip when a card is open (we already flew to it).
+  // to all of Bangalore. ONLY runs when the listing set itself changes (e.g.
+  // a new filter); closing a listing card no longer refits the map.
+  const lastListingsKeyRef = useRef("");
   useEffect(() => {
-    if (selectedId) return;
     if (!listings || listings.length === 0) return;
+
+    const key = listings.map((l) => l.id).sort().join("|");
+    if (key === lastListingsKeyRef.current) return; // listing set unchanged
+    lastListingsKeyRef.current = key;
 
     const lats = listings.map((l) => l.lat);
     const lngs = listings.map((l) => l.lng);
@@ -104,7 +109,6 @@ function MapController({ listings, selectedId, onSelectListing }) {
     const ne = [Math.max(...lats), Math.max(...lngs)];
 
     if (Math.abs(sw[0] - ne[0]) < 0.001 && Math.abs(sw[1] - ne[1]) < 0.001) {
-      // Single point or very tight cluster
       map.flyTo([sw[0], sw[1]], 14, { animate: true, duration: 0.6 });
     } else {
       map.flyToBounds([sw, ne], {
@@ -114,7 +118,7 @@ function MapController({ listings, selectedId, onSelectListing }) {
         animate: true,
       });
     }
-  }, [listings, map, selectedId]);
+  }, [listings, map]);
 
   // Soft "search area" overlay: translucent circles around each cluster of
   // listings, so the searched area reads visually like the reference image.

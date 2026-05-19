@@ -103,6 +103,24 @@ const LOCALITY_GEO = {
   Hoskote: [13.0701, 77.7980],
   Mahadevapura: [12.9940, 77.7010],
   Devanahalli: [13.2488, 77.7143],
+  // Newly added to fix mis-mappings observed in v1 dataset
+  "KR Puram": [13.0094, 77.7053],
+  Banaswadi: [13.0118, 77.6534],
+  Kammanahalli: [13.0167, 77.6394],
+  "HBR Layout": [13.0218, 77.6360],
+  Munnekollal: [12.9569, 77.7039],
+  Varthur: [12.9404, 77.7466],
+  Kasavanahalli: [12.8990, 77.6814],
+  Doddakannelli: [12.9099, 77.6862],
+  Kundalahalli: [12.9700, 77.7050],
+  "AECS Layout": [12.9750, 77.7080],
+  Munekolala: [12.9569, 77.7039],
+  Chandapura: [12.8030, 77.6970],
+  Hosa_Road: [12.8556, 77.6608],
+  "BEML Layout": [12.9355, 77.7370],
+  "Kasturba Road": [12.9696, 77.5980],
+  "Lavelle Road": [12.9716, 77.5946],
+  Bhuvanagiri: [12.9620, 77.6810],
 };
 
 const IN_BANGALORE = (lat, lng) =>
@@ -285,8 +303,8 @@ Or:
 {
   "is_listing": true,
   "title": "short clean title, e.g. '2BHK in Koramangala 5th Block'",
-  "locality": "ONE Bangalore neighbourhood, EXACT spelling from this list (or 'Unknown'):
-Koramangala, Indiranagar, HSR Layout, Whitefield, Bellandur, Sarjapur Road, Marathahalli, BTM Layout, Jayanagar, JP Nagar, Banashankari, Bannerghatta Road, Hebbal, Yelahanka, Electronic City, Bommanahalli, Singasandra, Hennur, Frazer Town, Shivajinagar, Cunningham Road, Richmond Town, Ulsoor, Domlur, Malleshwaram, Rajajinagar, Sadashivanagar, Basaveshwara Nagar, Vijayanagar, Mysore Road, Nagarbhavi, Jalahalli, Peenya, Nayandahalli, Kengeri, RT Nagar, Old Airport Road, CV Raman Nagar, Kasturi Nagar, Pai Layout, Kalyan Nagar, Brookefield, Hoodi, Kadugodi, Hoskote, Mahadevapura, Devanahalli",
+  "locality": "ONE Bangalore neighbourhood from this EXACT list. Use 'Unknown' if the post mentions any area NOT on this list (do NOT pick the alphabetically-closest name). The list:
+Koramangala, Indiranagar, HSR Layout, Whitefield, Bellandur, Sarjapur Road, Marathahalli, BTM Layout, Jayanagar, JP Nagar, Banashankari, Bannerghatta Road, Hebbal, Yelahanka, Electronic City, Bommanahalli, Singasandra, Hennur, Frazer Town, Shivajinagar, Cunningham Road, Richmond Town, Ulsoor, Domlur, Malleshwaram, Rajajinagar, Sadashivanagar, Basaveshwara Nagar, Vijayanagar, Mysore Road, Nagarbhavi, Jalahalli, Peenya, Nayandahalli, Kengeri, RT Nagar, Old Airport Road, CV Raman Nagar, Kasturi Nagar, Pai Layout, Kalyan Nagar, Brookefield, Hoodi, Kadugodi, Hoskote, Mahadevapura, Devanahalli, KR Puram, Banaswadi, Kammanahalli, HBR Layout, Munnekollal, Varthur, Kasavanahalli, Doddakannelli, Kundalahalli, AECS Layout, Chandapura, BEML Layout, Kasturba Road, Lavelle Road",
   "location_query": "most SPECIFIC address-like string from the post, suitable for geocoding. e.g. 'Koramangala 5th Block, near Sony Signal' or 'HSR Layout Sector 2, 27th Main'. NO city name needed.",
   "rent": integer (INR/month, REQUIRED, must be 5000-200000. If the post says 'X per person' or 'X for the room' that IS the rent),
   "deposit": integer (INR, omit if not stated),

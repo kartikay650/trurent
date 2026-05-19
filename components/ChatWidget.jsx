@@ -210,11 +210,16 @@ export default function ChatWidget({ onFiltersUpdate, forceCollapsed = false }) 
   }, [messages, isOpen, hydrated]);
 
   // Onboarding only fires on a truly fresh visit (no saved messages).
+  // On mobile we set the onboarding message but DON'T auto-open the panel,
+  // because opening a 420px-tall panel on a 700px-tall screen tanks the first
+  // impression. Users can tap the floating button when they're ready.
   useEffect(() => {
     if (!hydrated) return;
     if (messages.length > 0) return;
+    const isMobile =
+      typeof window !== "undefined" && window.innerWidth <= 768;
     const t = setTimeout(() => {
-      setIsOpen(true);
+      if (!isMobile) setIsOpen(true);
       setMessages((m) =>
         m.length === 0
           ? [{ role: "assistant", content: [{ type: "text", text: ONBOARDING_MESSAGE }] }]
