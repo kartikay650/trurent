@@ -12,6 +12,7 @@ import {
   normalizeAmenity,
   normalizeSource,
 } from "@/lib/filterListings";
+import { supabase } from "@/lib/supabase";
 
 function AnimatedNumber({ value }) {
   const [display, setDisplay] = useState(value);
@@ -85,19 +86,35 @@ export default function Home() {
   const [meta, setMeta] = useState(null);
 
   useEffect(() => {
-    fetch("/data/listings.json")
-      .then((r) => r.json())
-      .then((data) => {
-        setAllListings(data);
-        setIsLoaded(true);
-      })
-      .catch(() => setIsLoaded(true));
+    async function loadData() {
+      try {
+        const { data: listingsData, error: listingsError } = await supabase
+          .from("listings")
+          .select("*")
+          .order("postedAt", { ascending: false });
+        
+        if (!listingsError && listingsData) {
+          setAllListings(listingsData);
+        }
 
-    // Optional sibling file; absence is fine (older builds didn't have it).
-    fetch("/data/meta.json")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((m) => m && setMeta(m))
-      .catch(() => {});
+        const { data: metaData, error: metaError } = await supabase
+          .from("scrape_meta")
+          .select("*")
+          .order("id", { ascending: false })
+          .limit(1)
+          .single();
+          
+        if (!metaError && metaData) {
+          setMeta(metaData);
+        }
+      } catch (err) {
+        console.error("Failed to load from Supabase:", err);
+      } finally {
+        setIsLoaded(true);
+      }
+    }
+    
+    loadData();
   }, []);
 
   const filteredListings = useMemo(
@@ -361,7 +378,7 @@ export default function Home() {
             </span>
           </div>
 
-          {/* "Updated Xh ago" line — only when meta.json is available */}
+          {/* "Updated Xh ago" line — only when scrape_meta is available */}
           {meta?.scrapedAt && (
             <div
               title={`${meta.listingCount} listings scraped from Reddit at ${meta.scrapedAt}`}

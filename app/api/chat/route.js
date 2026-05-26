@@ -2,38 +2,41 @@
 // We stream NDJSON events back to the client so the UI can render text + tool calls
 // progressively. The loop continues calling Claude until stop_reason is "end_turn".
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { supabase } from "@/lib/supabase";
 import { filterListings, localityMatches } from "@/lib/filterListings";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 
-// ---- Listings loaded once at module load. Turbopack reloads this on JSON edits. ----
+// ---- Listings cached in memory for 1 minute ----
 let LISTINGS = [];
-try {
-  LISTINGS = JSON.parse(
-    readFileSync(join(process.cwd(), "public/data/listings.json"), "utf8"),
-  );
-} catch {
-  LISTINGS = [];
-}
+let LOCALITY_CENTROIDS = {};
+let KNOWN_LOCALITIES = [];
+let lastFetch = 0;
 
-// Precomputed locality metadata for fallback suggestions.
-const LOCALITY_CENTROIDS = (() => {
-  const groups = new Map();
-  for (const l of LISTINGS) {
-    const g = groups.get(l.locality) ?? { lat: 0, lng: 0, n: 0 };
-    g.lat += l.lat;
-    g.lng += l.lng;
-    g.n += 1;
-    groups.set(l.locality, g);
+async function ensureData() {
+  const now = Date.now();
+  if (LISTINGS.length > 0 && now - lastFetch < 60000) return;
+
+  const { data } = await supabase.from("listings").select("*");
+  if (data) {
+    LISTINGS = data;
+    lastFetch = now;
+
+    const groups = new Map();
+    for (const l of LISTINGS) {
+      const g = groups.get(l.locality) ?? { lat: 0, lng: 0, n: 0 };
+      g.lat += l.lat;
+      g.lng += l.lng;
+      g.n += 1;
+      groups.set(l.locality, g);
+    }
+    const out = {};
+    for (const [loc, g] of groups) {
+      out[loc] = { lat: g.lat / g.n, lng: g.lng / g.n, count: g.n };
+    }
+    LOCALITY_CENTROIDS = out;
+    KNOWN_LOCALITIES = Object.keys(out);
   }
-  const out = {};
-  for (const [loc, g] of groups) {
-    out[loc] = { lat: g.lat / g.n, lng: g.lng / g.n, count: g.n };
-  }
-  return out;
-})();
-const KNOWN_LOCALITIES = Object.keys(LOCALITY_CENTROIDS);
+}
 
 function haversineKm(a, b) {
   const R = 6371;
@@ -138,8 +141,11 @@ function computeAlternatives(filters) {
 }
 
 // ---- System prompt ----
+// Wrapped in a function so LISTINGS.length is read at request time, not at
+// module load time (when LISTINGS is still []).
 
-const SYSTEM_PROMPT = `You are TruRent's flat-finding agent for Bangalore. You have tools that let you actually search and reason over a database of ${LISTINGS.length} real Bangalore rental listings sourced from Reddit posts. Use them. Don't just describe what you'd do, do it.
+function buildSystemPrompt() {
+  return `You are TruRent's flat-finding agent for Bangalore. You have tools that let you actually search and reason over a database of ${LISTINGS.length} real Bangalore rental listings sourced from Reddit posts. Use them. Don't just describe what you'd do, do it.
 
 How you operate:
 1. Read what the user wants. If you have enough to search, search immediately.
@@ -198,6 +204,7 @@ When users ask "compare these" or "which has the shortest commute" or "best valu
 When the user says reset/clear/start over/show everything, call search_listings with no filters at all.
 
 When you finish a tool sequence, write a short final reply. Don't dump JSON. Don't say "I found X listings" without naming a few specifics (areas, rents).`;
+}
 
 // ---- Tool definitions for Claude ----
 
@@ -437,6 +444,10 @@ async function* parseAnthropicStream(body) {
 const MAX_ITERATIONS = 6;
 
 async function runAgentLoop(messages, send, apiKey) {
+  // Make sure LISTINGS / LOCALITY_CENTROIDS are populated from Supabase before
+  // any tool is allowed to run. Cached in-memory for 60s after the first hit.
+  await ensureData();
+
   let conv = messages.slice();
   const startTime = Date.now();
   let tokensIn = 0;
@@ -454,7 +465,7 @@ async function runAgentLoop(messages, send, apiKey) {
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 2048,
-        system: SYSTEM_PROMPT,
+        system: buildSystemPrompt(),
         messages: conv,
         tools: TOOLS,
         stream: true,

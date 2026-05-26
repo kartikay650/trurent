@@ -8,7 +8,7 @@
 //   - Pagination so we pull more than 100 per sub.
 //   - Time-window filter: drop anything older than MAX_AGE_DAYS (default 120).
 //   - Each post is re-fetched as .json to confirm it isn't deleted/removed.
-//   - Writes public/data/meta.json with scrape timestamp + source counts.
+//   - Writes scrape metadata to the Supabase scrape_meta table.
 //
 // Designed to be safe to run on a cron (no inputs, deterministic output,
 // resumable via cache).
@@ -18,12 +18,30 @@
 //                MAX_AGE_DAYS (defaults to 120)
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { createClient } from "@supabase/supabase-js";
+
+// Load .env.local if running locally
+if (existsSync(".env.local")) {
+  const envFile = readFileSync(".env.local", "utf8");
+  envFile.split("\n").forEach((line) => {
+    const match = line.match(/^([^=]+)=(.*)$/);
+    if (match) process.env[match[1]] = match[2].trim();
+  });
+}
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 if (!API_KEY) {
   console.error("Missing ANTHROPIC_API_KEY in environment.");
   process.exit(1);
 }
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment.");
+  process.exit(1);
+}
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 const USER_AGENT =
   process.env.REDDIT_USER_AGENT ||
@@ -167,8 +185,52 @@ function pickPhotos(seedKey) {
   );
 }
 
+// Extract actual images from Reddit post data. Reddit carries images in 3 places:
+// 1. Gallery posts: post.gallery_data + post.media_metadata
+// 2. Preview images: post.preview.images[0].source.url
+// 3. Direct image links: post.url (i.redd.it)
+function extractRedditPhotos(post) {
+  const photos = [];
+  const seen = new Set();
+  function add(url) {
+    if (!url || seen.has(url)) return;
+    // Unescape Reddit's HTML entities in URLs
+    const clean = url.replace(/&amp;/g, "&");
+    seen.add(clean);
+    photos.push(clean);
+  }
+  // 1. Gallery posts (multiple images)
+  if (post.gallery_data?.items && post.media_metadata) {
+    for (const item of post.gallery_data.items) {
+      const meta = post.media_metadata[item.media_id];
+      if (meta?.s?.u) add(meta.s.u);
+    }
+  }
+  // 2. Preview images
+  if (post.preview?.images) {
+    for (const img of post.preview.images) {
+      if (img.source?.url) add(img.source.url);
+    }
+  }
+  // 3. Direct image URL (i.redd.it links)
+  if (/\.(jpg|jpeg|png|webp)(\?.*)?$/i.test(post.url || "")) {
+    add(post.url);
+  }
+  return photos.length > 0 ? photos.slice(0, 5) : null; // cap at 5
+}
+
 function daysAgo(unixSeconds) {
   return Math.max(1, Math.floor((Date.now() / 1000 - unixSeconds) / 86400));
+}
+
+// Content-similarity deduplication: catch same person posting across multiple subs.
+function isDuplicateContent(parsed, post, existingExtracted) {
+  return existingExtracted.some((e) =>
+    e.parsed.locality === parsed.locality &&
+    e.parsed.rent === parsed.rent &&
+    e.parsed.bhk === parsed.bhk &&
+    Math.abs(e.post.created_utc - post.created_utc) < 86400 * 3 // within 3 days
+  );
 }
 
 // ---------- stage 1: pull fresh posts from Reddit ----------
@@ -308,8 +370,20 @@ Koramangala, Indiranagar, HSR Layout, Whitefield, Bellandur, Sarjapur Road, Mara
   "location_query": "most SPECIFIC address-like string from the post, suitable for geocoding. e.g. 'Koramangala 5th Block, near Sony Signal' or 'HSR Layout Sector 2, 27th Main'. NO city name needed.",
   "rent": integer (INR/month, REQUIRED, must be 5000-200000. If the post says 'X per person' or 'X for the room' that IS the rent),
   "deposit": integer (INR, omit if not stated),
-  "brokerage": integer (INR, 0 if zero/no broker/direct owner, omit if not stated),
+  "brokerage": integer — VERY IMPORTANT, read carefully:
+    - If the post says "no brokerage", "zero brokerage", "direct owner", "owner direct", "no broker", "0 brokerage" → set to 0
+    - If the post mentions a specific broker fee (e.g. "brokerage 15000", "broker charges 1 month") → set to that amount (convert "1 month" to the rent amount)
+    - If the word "broker" or "brokerage" appears but preceded/followed by "no"/"not"/"zero"/"without" → set to 0
+    - If not mentioned at all → omit (caller will default),
   "bhk": integer (1 for single rooms / studios / PGs / shared rooms. 2 or 3 ONLY when the whole flat is being offered),
+  "listingType": "entire_flat" | "room" | "pg" — IMPORTANT:
+    - "entire_flat" = the WHOLE flat/apartment is being offered (e.g. "2BHK for rent", "entire flat available")
+    - "room" = a single room or bed in a shared flat (e.g. "1 room in 3BHK", "flatmate needed", "replacement needed", "single occupancy in shared flat")
+    - "pg" = paying guest / hostel accommodation (e.g. "PG available", "paying guest"),
+  "genderPreference": "male" | "female" | "any" — what gender the listing prefers:
+    - "male" if: "male only", "boys only", "gents", "bachelor boys", "male flatmate"
+    - "female" if: "female only", "girls only", "ladies", "working women", "female flatmate"
+    - "any" if: not mentioned, "no preference", "any gender", "couple friendly", "family",
   "furnished": "fully" | "semi" | "unfurnished" (omit if unclear),
   "amenities": array, only from: gym, pool, parking, power_backup, garden, security, club. Omit field if none mentioned.,
   "description": "1-2 sentence summary of what's available, cleaned up from the post"
@@ -441,7 +515,15 @@ async function main() {
       await sleep(100);
       continue;
     }
-    console.log(`KEEP ${parsed.locality} ${parsed.bhk}BHK ₹${parsed.rent}`);
+    // Content-similarity dedup: catch same listing posted in multiple subs
+    if (isDuplicateContent(parsed, post, extracted)) {
+      console.log(`skip (duplicate content: ${parsed.locality} ${parsed.bhk}BHK ₹${parsed.rent})`);
+      await sleep(100);
+      continue;
+    }
+    const typeLabel = parsed.listingType === "entire_flat" ? "FLAT" : parsed.listingType === "pg" ? "PG" : "ROOM";
+    const genderLabel = parsed.genderPreference === "male" ? "♂" : parsed.genderPreference === "female" ? "♀" : "⚥";
+    console.log(`KEEP ${parsed.locality} ${parsed.bhk}BHK ₹${parsed.rent} [${typeLabel}] [${genderLabel}]`);
     extracted.push({ post, parsed });
     await sleep(100);
   }
@@ -473,6 +555,7 @@ async function main() {
       continue;
     }
     const id = `rdt_${post.id}`;
+    const redditPhotos = extractRedditPhotos(post);
     listings.push({
       id,
       title: parsed.title || `${parsed.bhk}BHK ${parsed.locality}`,
@@ -485,6 +568,8 @@ async function main() {
       lng,
       geoSource,
       furnished: parsed.furnished || "semi",
+      listingType: parsed.listingType || "room",
+      genderPreference: parsed.genderPreference || "any",
       amenities: Array.isArray(parsed.amenities) ? parsed.amenities : [],
       nearby: [],
       source: "reddit",
@@ -495,7 +580,9 @@ async function main() {
         parsed.description ||
         (post.selftext || post.title).slice(0, 240).replace(/\s+/g, " "),
       postedDaysAgo: daysAgo(post.created_utc),
-      photos: pickPhotos(id),
+      postedAt: new Date(post.created_utc * 1000).toISOString(),
+      photos: redditPhotos || pickPhotos(id),
+      hasRealPhotos: !!redditPhotos,
     });
   }
 
@@ -504,13 +591,21 @@ async function main() {
   const now = new Date();
   const byLoc = {};
   const byBhk = { 1: 0, 2: 0, 3: 0 };
+  const byType = { entire_flat: 0, room: 0, pg: 0 };
+  const byGender = { male: 0, female: 0, any: 0 };
   let rentMin = Infinity, rentMax = -Infinity;
   let geocoded = 0;
+  let realPhotos = 0;
+  let zeroBrokerage = 0;
   const subCounts = {};
   for (const l of listings) {
     byLoc[l.locality] = (byLoc[l.locality] || 0) + 1;
     byBhk[l.bhk] = (byBhk[l.bhk] || 0) + 1;
+    byType[l.listingType] = (byType[l.listingType] || 0) + 1;
+    byGender[l.genderPreference] = (byGender[l.genderPreference] || 0) + 1;
     if (l.geoSource === "nominatim") geocoded += 1;
+    if (l.hasRealPhotos) realPhotos += 1;
+    if (l.brokerage === 0) zeroBrokerage += 1;
     if (l.rent < rentMin) rentMin = l.rent;
     if (l.rent > rentMax) rentMax = l.rent;
     subCounts[l.sourceSubreddit] = (subCounts[l.sourceSubreddit] || 0) + 1;
@@ -519,37 +614,60 @@ async function main() {
   console.log(`\n=== Verification ===`);
   console.log(`Total kept:           ${listings.length}`);
   console.log(`Geocoded by Nominatim: ${geocoded} / ${listings.length}`);
-  console.log(`BHK:  1BHK ${byBhk[1]}, 2BHK ${byBhk[2]}, 3BHK ${byBhk[3]}`);
-  console.log(`Rent: ₹${rentMin === Infinity ? "-" : rentMin} - ₹${rentMax === -Infinity ? "-" : rentMax}`);
-  console.log(`Subs: ${Object.entries(subCounts).map(([k, v]) => `${k}:${v}`).join(", ")}`);
+  console.log(`Real Reddit photos:    ${realPhotos} / ${listings.length}`);
+  console.log(`Zero brokerage:        ${zeroBrokerage} / ${listings.length}`);
+  console.log(`BHK:    1BHK ${byBhk[1]}, 2BHK ${byBhk[2]}, 3BHK ${byBhk[3]}`);
+  console.log(`Type:   Flat ${byType.entire_flat}, Room ${byType.room}, PG ${byType.pg}`);
+  console.log(`Gender: Male ${byGender.male}, Female ${byGender.female}, Any ${byGender.any}`);
+  console.log(`Rent:   ₹${rentMin === Infinity ? "-" : rentMin} - ₹${rentMax === -Infinity ? "-" : rentMax}`);
+  console.log(`Subs:   ${Object.entries(subCounts).map(([k, v]) => `${k}:${v}`).join(", ")}`);
   console.log(`Locality coverage:`);
   for (const [loc, n] of Object.entries(byLoc).sort((a, b) => b[1] - a[1])) {
     console.log(`  ${loc.padEnd(24)} ${n}`);
   }
 
+  // ---------- output to Supabase ----------
+
+  console.log(`\n[5/5] Saving to Supabase...`);
+  
+  // Upsert listings (id is primary key)
+  const { error: listingsError } = await supabase
+    .from("listings")
+    .upsert(listings);
+    
+  if (listingsError) {
+    console.error("Error saving listings to Supabase:", listingsError);
+    process.exit(1);
+  }
+
+  // Insert metadata
+  const { error: metaError } = await supabase
+    .from("scrape_meta")
+    .insert([{
+      scrapedAt: now.toISOString(),
+      listingCount: listings.length,
+      geocodedCount: geocoded,
+      realPhotoCount: realPhotos,
+      zeroBrokerageCount: zeroBrokerage,
+      bhkDistribution: byBhk,
+      typeDistribution: byType,
+      genderDistribution: byGender,
+      sourceSubreddits: subCounts,
+      maxAgeDays: MAX_AGE_DAYS,
+    }]);
+
+  if (metaError) {
+    console.error("Error saving meta to Supabase:", metaError);
+    process.exit(1);
+  }
+
+  // Also write JSON locally for backward compatibility until Phase 4 (API read migration)
   writeFileSync(
     "public/data/listings.json",
     "[\n" + listings.map((l) => "  " + JSON.stringify(l)).join(",\n") + "\n]\n",
   );
 
-  writeFileSync(
-    "public/data/meta.json",
-    JSON.stringify(
-      {
-        scrapedAt: now.toISOString(),
-        listingCount: listings.length,
-        geocodedCount: geocoded,
-        bhkDistribution: byBhk,
-        sourceSubreddits: subCounts,
-        maxAgeDays: MAX_AGE_DAYS,
-      },
-      null,
-      2,
-    ),
-  );
-
-  console.log(`\nWrote public/data/listings.json (${listings.length} listings).`);
-  console.log(`Wrote public/data/meta.json (scrapedAt=${now.toISOString()}).`);
+  console.log(`\nSaved ${listings.length} listings to Supabase (and local JSON).`);
 }
 
 main().catch((e) => {
