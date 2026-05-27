@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatINR } from "@/lib/filterListings";
+import ReportListingDialog from "./ReportListingDialog";
 
 const SOURCE_COLOR = {
   reddit: "#FF4500",
@@ -67,12 +68,20 @@ const LABEL_STYLE = {
   fontFamily: "var(--font-dm-sans), sans-serif",
 };
 
+function bhkLabel(bhk) {
+  if (bhk == null) return "";
+  if (bhk >= 5) return "5+ BHK";
+  return `${bhk} BHK`;
+}
+
 export default function ListingCard({ listing, onClose }) {
   const [mounted, setMounted] = useState(false);
+  const [reporting, setReporting] = useState(false);
 
   useEffect(() => {
     if (!listing) {
       setMounted(false);
+      setReporting(false);
       return;
     }
     const t = setTimeout(() => setMounted(true), 10);
@@ -88,6 +97,12 @@ export default function ListingCard({ listing, onClose }) {
 
   return (
     <>
+      {reporting && (
+        <ReportListingDialog
+          listingId={listing.id}
+          onClose={() => setReporting(false)}
+        />
+      )}
       <style>{`
         .trurent-card-cta:hover {
           background: var(--accent-hover) !important;
@@ -124,23 +139,33 @@ export default function ListingCard({ listing, onClose }) {
           fontFamily: "var(--font-dm-sans), sans-serif",
         }}
       >
-        {/* Hero image: fills top of the card, with a status pill overlaid */}
-        {listing.photos?.[0] && (
-          <div
-            style={{
-              position: "relative",
-              width: "100%",
-              height: 180,
-              overflow: "hidden",
-              background: "var(--bg-elevated)",
-            }}
-          >
+        {/* Hero image OR an honest "no photo" placeholder. We no longer
+            fabricate stock photos for posts that didn't include any. */}
+        <div
+          style={{
+            position: "relative",
+            width: "100%",
+            height: listing.photos?.[0] ? 180 : 80,
+            overflow: "hidden",
+            background: "var(--bg-elevated)",
+            borderBottom: listing.photos?.[0]
+              ? "none"
+              : "1px solid var(--border-subtle)",
+          }}
+        >
+          {listing.photos?.[0] ? (
             <img
               src={listing.photos[0]}
               alt={listing.title}
               loading="lazy"
               onError={(e) => {
-                e.currentTarget.parentElement.style.display = "none";
+                // If the URL 404s, swap to the placeholder treatment.
+                const parent = e.currentTarget.parentElement;
+                if (parent) {
+                  e.currentTarget.style.display = "none";
+                  parent.style.height = "80px";
+                  parent.style.borderBottom = "1px solid var(--border-subtle)";
+                }
               }}
               style={{
                 width: "100%",
@@ -149,40 +174,56 @@ export default function ListingCard({ listing, onClose }) {
                 display: "block",
               }}
             />
-            {/* Status pill: "Available · Source" with a colored dot */}
+          ) : (
             <div
               style={{
-                position: "absolute",
-                top: 12,
-                left: 12,
-                display: "inline-flex",
+                width: "100%",
+                height: "100%",
+                display: "flex",
                 alignItems: "center",
-                gap: 6,
-                padding: "5px 10px 5px 8px",
-                background: "rgba(255,255,255,0.92)",
-                backdropFilter: "blur(8px)",
-                WebkitBackdropFilter: "blur(8px)",
-                borderRadius: 16,
+                justifyContent: "flex-end",
+                paddingRight: 16,
                 fontSize: 11,
-                fontWeight: 500,
-                color: "var(--text-primary)",
-                letterSpacing: "-0.01em",
-                boxShadow: "0 2px 8px rgba(28,27,24,0.10)",
+                color: "var(--text-tertiary)",
+                fontFamily: "var(--font-playfair), serif",
+                fontStyle: "italic",
               }}
             >
-              <span
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  background: sourceColor,
-                  flexShrink: 0,
-                }}
-              />
-              Available · {sourceName}
+              No photos in the original post
             </div>
+          )}
+          <div
+            style={{
+              position: "absolute",
+              top: 12,
+              left: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "5px 10px 5px 8px",
+              background: "rgba(255,255,255,0.92)",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              borderRadius: 16,
+              fontSize: 11,
+              fontWeight: 500,
+              color: "var(--text-primary)",
+              letterSpacing: "-0.01em",
+              boxShadow: "0 2px 8px rgba(28,27,24,0.10)",
+            }}
+          >
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: sourceColor,
+                flexShrink: 0,
+              }}
+            />
+            Available · {sourceName}
           </div>
-        )}
+        </div>
 
         <div
           className="trurent-card-inner"
@@ -256,7 +297,14 @@ export default function ListingCard({ listing, onClose }) {
                   color: "var(--text-secondary)",
                 }}
               >
-                {listing.locality}
+                {[
+                  bhkLabel(listing.bhk),
+                  listing.locality,
+                  listing.societyName,
+                  listing.sqft ? `${listing.sqft.toLocaleString("en-IN")} sqft` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </div>
             </div>
 
@@ -466,7 +514,7 @@ export default function ListingCard({ listing, onClose }) {
             {listing.description}
           </div>
 
-          {/* Source attribution: only when from Reddit (we have author + sub) */}
+          {/* Attribution row: Reddit username for scraped, owner name for direct */}
           {listing.source === "reddit" && listing.sourceAuthor && (
             <div
               style={{
@@ -481,33 +529,131 @@ export default function ListingCard({ listing, onClose }) {
               {listing.sourceSubreddit ? ` in r/${listing.sourceSubreddit}` : ""}
             </div>
           )}
+          {listing.source === "owner" && listing.ownerName && (
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 11,
+                color: "var(--text-tertiary)",
+                fontFamily: "var(--font-dm-mono), monospace",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              Listed by {listing.ownerName}
+              {listing.ownerPhone ? ` · ${listing.ownerPhone}` : ""}
+            </div>
+          )}
 
-          {/* CTA */}
-          <button
-            className="trurent-card-cta"
-            onClick={() =>
-              window.open(listing.sourceUrl, "_blank", "noopener")
-            }
-            style={{
-              marginTop: 20,
-              width: "100%",
-              height: 44,
-              borderRadius: 8,
-              background: "var(--accent-primary)",
-              color: "#FFFFFF",
-              fontFamily: "var(--font-dm-sans), sans-serif",
-              fontSize: 14,
-              fontWeight: 500,
-              letterSpacing: "-0.01em",
-              border: "none",
-              cursor: "pointer",
-              transition: "background 150ms ease",
-            }}
-          >
-            View on {sourceName} →
-          </button>
+          {/* CTA — owner listings go to WhatsApp; scraped listings go to source */}
+          <OwnerOrSourceCta listing={listing} sourceName={sourceName} />
+
+          {/* Tiny report link for crowd-sourced corrections */}
+          <div style={{ marginTop: 14, textAlign: "right" }}>
+            <button
+              type="button"
+              onClick={() => setReporting(true)}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--text-tertiary)",
+                fontSize: 11,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                textDecoration: "underline",
+                textUnderlineOffset: 2,
+                padding: 0,
+              }}
+            >
+              Something off about this listing? Report it
+            </button>
+          </div>
         </div>
       </div>
     </>
+  );
+}
+
+function OwnerOrSourceCta({ listing, sourceName }) {
+  if (listing.source === "owner" && listing.ownerPhone) {
+    const cleanPhone = listing.ownerPhone.replace(/[^\d]/g, "");
+    const wa = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
+      `Hi ${listing.ownerName || "there"}, I saw your ${listing.bhk}BHK in ${listing.locality} on TruRent and I'm interested.`,
+    )}`;
+    const tel = `tel:+${cleanPhone}`;
+    return (
+      <div style={{ marginTop: 20, display: "flex", gap: 8 }}>
+        <a
+          href={wa}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="trurent-card-cta"
+          style={{
+            flex: 1,
+            height: 44,
+            borderRadius: 8,
+            background: "var(--accent-primary)",
+            color: "#FFFFFF",
+            fontFamily: "var(--font-dm-sans), sans-serif",
+            fontSize: 14,
+            fontWeight: 500,
+            letterSpacing: "-0.01em",
+            border: "none",
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textDecoration: "none",
+            transition: "background 150ms ease",
+          }}
+        >
+          WhatsApp owner →
+        </a>
+        <a
+          href={tel}
+          style={{
+            height: 44,
+            padding: "0 16px",
+            borderRadius: 8,
+            background: "var(--bg-elevated)",
+            color: "var(--text-primary)",
+            fontFamily: "var(--font-dm-sans), sans-serif",
+            fontSize: 13,
+            fontWeight: 500,
+            letterSpacing: "-0.01em",
+            border: "1px solid var(--border-default)",
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textDecoration: "none",
+          }}
+        >
+          Call
+        </a>
+      </div>
+    );
+  }
+  return (
+    <button
+      className="trurent-card-cta"
+      onClick={() => window.open(listing.sourceUrl, "_blank", "noopener")}
+      style={{
+        marginTop: 20,
+        width: "100%",
+        height: 44,
+        borderRadius: 8,
+        background: "var(--accent-primary)",
+        color: "#FFFFFF",
+        fontFamily: "var(--font-dm-sans), sans-serif",
+        fontSize: 14,
+        fontWeight: 500,
+        letterSpacing: "-0.01em",
+        border: "none",
+        cursor: "pointer",
+        transition: "background 150ms ease",
+      }}
+    >
+      View on {sourceName} →
+    </button>
   );
 }

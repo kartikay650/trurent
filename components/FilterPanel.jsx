@@ -146,6 +146,24 @@ export default function FilterPanel({ filters, setFilters }) {
     });
   }
 
+  function setListingType(value) {
+    setFilters((f) => {
+      const out = { ...f };
+      if (f.listingType === value) delete out.listingType;
+      else out.listingType = value;
+      return out;
+    });
+  }
+
+  function setPostedWithin(days) {
+    setFilters((f) => {
+      const out = { ...f };
+      if (f.postedWithinDays === days) delete out.postedWithinDays;
+      else out.postedWithinDays = days;
+      return out;
+    });
+  }
+
   function clearAll() {
     setFilters({});
   }
@@ -158,6 +176,8 @@ export default function FilterPanel({ filters, setFilters }) {
     filters.furnished,
     filters.noBrokerageOnly,
     filters.amenities?.length,
+    filters.listingType,
+    filters.postedWithinDays,
   ].filter(Boolean).length;
 
   return (
@@ -309,18 +329,60 @@ export default function FilterPanel({ filters, setFilters }) {
 
       {isOpen && (
         <div ref={panelRef} className="trurent-fp-panel">
+          {/* Listing type */}
+          <div className="trurent-fp-row">
+            <span className="trurent-fp-label">Listing type</span>
+            <div>
+              {[
+                { value: "entire_flat", label: "Entire flat" },
+                { value: "room", label: "Single room" },
+                { value: "pg", label: "PG" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`trurent-fp-chip${filters.listingType === opt.value ? " on" : ""}`}
+                  onClick={() => setListingType(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Posted */}
+          <div className="trurent-fp-row">
+            <span className="trurent-fp-label">Posted</span>
+            <div>
+              {[
+                { days: 1, label: "Last 24h" },
+                { days: 7, label: "Last week" },
+                { days: 30, label: "Last month" },
+              ].map((opt) => (
+                <button
+                  key={opt.days}
+                  type="button"
+                  className={`trurent-fp-chip${filters.postedWithinDays === opt.days ? " on" : ""}`}
+                  onClick={() => setPostedWithin(opt.days)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* BHK */}
           <div className="trurent-fp-row">
             <span className="trurent-fp-label">Bedrooms</span>
             <div>
-              {[1, 2, 3].map((n) => (
+              {[1, 2, 3, 4, 5].map((n) => (
                 <button
                   key={n}
                   type="button"
                   className={`trurent-fp-chip${bhkSet.has(n) ? " on" : ""}`}
                   onClick={() => toggleBhk(n)}
                 >
-                  {n} BHK
+                  {n === 5 ? "5+ BHK" : `${n} BHK`}
                 </button>
               ))}
             </div>

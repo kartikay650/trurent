@@ -19,9 +19,22 @@ function rentColor(rent) {
   return "#DC2626";
 }
 
+// Gender preference glyph + accent color. These render right after the rent
+// in the marker label so renters can scan the map without opening cards.
+//   any    -> no glyph (neutral)
+//   male   -> ♂ (blue tint)
+//   female -> ♀ (pink tint)
+function genderGlyph(pref) {
+  if (pref === "male") return { glyph: "♂", tint: "#2563EB" };
+  if (pref === "female") return { glyph: "♀", tint: "#DB2777" };
+  return null;
+}
+
 function buildIcon(listing, isSelected) {
   const color = rentColor(listing.rent);
-  const label = (listing.brokerage === 0 ? "★ " : "") + shortRent(listing.rent);
+  const star = listing.brokerage === 0 ? "★ " : "";
+  const rentLabel = shortRent(listing.rent);
+  const gender = genderGlyph(listing.genderPreference);
   const bg = isSelected ? "#1C1B18" : "#FFFFFF";
   const fg = isSelected ? "#FFFFFF" : "#1C1B18";
   const borderWidth = isSelected ? "2.5px" : "1.5px";
@@ -29,13 +42,24 @@ function buildIcon(listing, isSelected) {
     ? "0 4px 14px rgba(28,27,24,0.22)"
     : "0 2px 6px rgba(28,27,24,0.10)";
 
+  // When isSelected the foreground is light, so use a lighter tint for the
+  // gender glyph so it stays legible on the dark pill.
+  const glyphColor = gender
+    ? isSelected
+      ? "#FFFFFF"
+      : gender.tint
+    : "transparent";
+  const glyphHtml = gender
+    ? `<span style="margin-left:6px;color:${glyphColor};font-size:13px;line-height:1;display:inline-block;vertical-align:-1px;">${gender.glyph}</span>`
+    : "";
+
   const html =
     `<div style="background:${bg};color:${fg};` +
     `border:${borderWidth} solid ${color};border-radius:20px;` +
     `padding:4px 10px;font-size:11px;font-family:'DM Mono',monospace;` +
     `font-weight:500;white-space:nowrap;cursor:pointer;letter-spacing:-0.02em;` +
-    `box-shadow:${shadow};">` +
-    `${label}</div>`;
+    `box-shadow:${shadow};display:inline-flex;align-items:center;">` +
+    `<span>${star}${rentLabel}</span>${glyphHtml}</div>`;
 
   return L.divIcon({
     html,

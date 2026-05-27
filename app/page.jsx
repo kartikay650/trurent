@@ -246,6 +246,8 @@ export default function Home() {
         .trurent-chip { animation: trurent-chip-in 150ms ease forwards; }
         .trurent-chip-x { transition: color 150ms ease; }
         .trurent-chip-x:hover { color: var(--text-primary) !important; }
+        .trurent-list-link { transition: color 150ms ease, border-color 150ms ease; }
+        .trurent-list-link:hover { color: var(--text-primary); border-color: var(--text-primary); }
         @media (max-width: 768px) {
           .trurent-topbar {
             top: 12px !important;
@@ -346,6 +348,23 @@ export default function Home() {
             >
               Skip the brokers · Bangalore
             </div>
+            <a
+              href="/post"
+              className="trurent-list-link"
+              style={{
+                display: "inline-block",
+                marginTop: 6,
+                fontFamily: "var(--font-dm-sans), sans-serif",
+                fontSize: 11,
+                color: "var(--text-secondary)",
+                textDecoration: "none",
+                borderBottom: "1px solid var(--border-default)",
+                paddingBottom: 1,
+                letterSpacing: "0.02em",
+              }}
+            >
+              List your flat &rarr;
+            </a>
           </div>
 
           {/* Count: editorial number, not a pill */}
@@ -530,6 +549,25 @@ export default function Home() {
                 }}
               >
                 ★ no brokerage
+              </span>
+              <span
+                style={{
+                  marginLeft: 4,
+                  paddingLeft: 14,
+                  borderLeft: "1px solid var(--border-subtle)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 11,
+                  color: "var(--text-tertiary)",
+                  fontFamily: "var(--font-dm-mono), monospace",
+                }}
+              >
+                <span style={{ color: "#2563EB", fontSize: 13 }}>♂</span>
+                <span style={{ color: "#DB2777", fontSize: 13 }}>♀</span>
+                <span style={{ fontStyle: "italic", fontFamily: "var(--font-playfair), serif" }}>
+                  tenant pref
+                </span>
               </span>
             </div>
 
