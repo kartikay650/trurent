@@ -86,12 +86,12 @@ function computeAlternatives(filters) {
     if (n > 0) alts.if_max_rent_raised_30pct = { new_max_rent: newMax, count: n };
   }
 
-  // 2. Broaden BHK to include adjacent values
+  // 2. Broaden BHK to include adjacent values (1-5, where 5 covers 5+).
   if (Array.isArray(filters.bhk) && filters.bhk.length > 0) {
     const broaden = new Set(filters.bhk);
     for (const b of filters.bhk) {
       if (b - 1 >= 1) broaden.add(b - 1);
-      if (b + 1 <= 3) broaden.add(b + 1);
+      if (b + 1 <= 5) broaden.add(b + 1);
     }
     const arr = [...broaden].sort();
     if (arr.length > filters.bhk.length) {
@@ -166,7 +166,7 @@ Tech park → locality mapping:
 - MG Road / UB City → Ulsoor, Indiranagar, Domlur
 
 When searching:
-- bhk is always an array of integers from {1, 2, 3}. We have NO 4+ BHK listings.
+- bhk is an array of integers. Supported values are 1, 2, 3, 4, and 5 (where 5 covers any flat with 5 or more bedrooms). Owners can list higher BHK counts; a [5] filter shows everything 5+.
 - For "no broker"/"zero brokerage"/"direct owner", set noBrokerageOnly: true.
 - For "cheap" with no number, use maxRent: 20000. "Premium" or "luxury" → minRent: 50000.
 - amenities are from this EXACT list: gym, pool, parking, power_backup, garden, security, club. Nothing else (no wifi, no AC, no pet-friendly, none of those are in the dataset).
@@ -195,7 +195,7 @@ NEVER just say "I found 0 listings" with no suggestion. NEVER act like everythin
 # Scope (be honest about what this is)
 
 - This product covers Bangalore residential rentals only. If asked about Mumbai/Pune/Hyderabad/anywhere else, say we're Bangalore-only.
-- The listings are real Bangalore rental posts sourced from Reddit (r/bangalore, r/IndianRealEstate, r/bengaluru, etc.). Each listing links back to its original Reddit post. Coordinates come from OpenStreetMap geocoding of the address mentioned in each post (or the neighbourhood centroid if no specific address was given). If asked directly, be honest about the data source.
+- Listings come from two sources: (1) Reddit posts in r/bangalore, r/IndianRealEstate, r/bengaluru etc. that we scrape and link back to the original post; and (2) direct owner submissions through our /post page, where the owner drops a pin on the map and we show their phone/WhatsApp on the listing card. If asked directly, be honest about both sources. For Reddit listings, coordinates come from OpenStreetMap geocoding (or the neighbourhood centroid). For owner listings, coordinates are exactly where the owner placed the pin.
 - You can't book viewings, contact landlords, or schedule anything. You search and reason about listings. If asked, say so briefly and steer back.
 - If asked off-topic (jokes, weather, general knowledge), give a one-line redirect: something like "I'm just here for Bangalore flats. Want to search?"
 
@@ -249,6 +249,17 @@ const TOOLS = [
           description:
             "Required amenities from: gym, pool, parking, power_backup, garden, security, club.",
         },
+        listingType: {
+          type: "string",
+          enum: ["entire_flat", "room", "pg"],
+          description:
+            "Use 'entire_flat' when user wants a whole flat (not a shared room), 'room' for single rooms / flatmate vacancies, 'pg' for paying-guest accommodation. Omit if the user didn't specify.",
+        },
+        postedWithinDays: {
+          type: "number",
+          description:
+            "Recency filter — number of days. Use 1 for 'today / last 24 hours', 7 for 'this week', 30 for 'this month'. Omit if recency wasn't requested.",
+        },
       },
     },
   },
@@ -292,7 +303,10 @@ const SUPPORTED_AMENITIES = new Set([
   "security",
   "club",
 ]);
-const SUPPORTED_BHKS = new Set([1, 2, 3]);
+// Owners list anything from 1 to 5+ BHK. 5 in the filter array means
+// "5 or more"; filterListings handles the >= semantics. Anything outside
+// 1-5 from the agent is treated as unsupported.
+const SUPPORTED_BHKS = new Set([1, 2, 3, 4, 5]);
 
 function executeTool(name, input) {
   if (name === "search_listings") {
@@ -357,7 +371,7 @@ function executeTool(name, input) {
     if (unsupportedBhks.length > 0) {
       result.unsupported_bhks = unsupportedBhks;
       result.note_unsupported_bhks =
-        "We only have 1, 2, and 3 BHK listings in the dataset.";
+        "BHK filter only accepts 1-5 (5 means 5 or more).";
     }
     if (alternatives) result.alternatives = alternatives;
 
