@@ -26,6 +26,12 @@ concurrency:
   group: refresh-listings
   cancel-in-progress: false
 
+# Forces actions/checkout, actions/setup-node, etc. to run on Node 24 instead
+# of their default Node 20 runtime. Silences the deprecation warning AND
+# future-proofs us against GitHub's forced migration on June 2nd, 2026.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
@@ -37,11 +43,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          # @supabase/supabase-js v2.106+ initializes its realtime client at
-          # construction time and that needs native WebSocket support, which
-          # Node 20 lacks. 22 LTS ships with native WebSocket; Vercel runs 24
-          # so staying on 22+ also matches prod parity.
-          node-version: "22"
+          # Match Vercel exactly (Vercel runs 24). Even with this pin, the
+          # supabase-js init is now Node-version-agnostic — it falls back to
+          # the `ws` package if globalThis.WebSocket isn't defined.
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
