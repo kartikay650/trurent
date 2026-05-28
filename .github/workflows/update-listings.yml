@@ -57,6 +57,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Reddit OAuth (script-app password grant). Without these the
+          # scraper falls back to unauthenticated .json which Reddit now
+          # 403s for every IP we've tested, including residential.
+          # Create the script app at https://www.reddit.com/prefs/apps
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
           REDDIT_USER_AGENT: "github-actions:TruRent:v2.0 (by /u/kartikay650)"
           MAX_AGE_DAYS: "120"
           # SOURCES=reddit,olx,telegram,twitter once each ships.

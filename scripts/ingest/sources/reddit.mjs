@@ -3,11 +3,69 @@
 // the first 3 pages.
 //
 // We deliberately stay narrow (no India-wide subs); going broad dilutes yield.
+//
+// Auth: Reddit closed unauthenticated .json access. We use OAuth with the
+// "password" grant (script-app type) — needs REDDIT_CLIENT_ID,
+// REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD env vars. If those
+// aren't set, we fall back to the public .json endpoints (will 403 in CI
+// but might still work locally if Reddit ever loosens up again).
 
 import { USER_AGENT } from "../shared/env.mjs";
 import { sleep, daysAgoFromUnix } from "../shared/util.mjs";
 
 const MAX_AGE_DAYS = parseInt(process.env.MAX_AGE_DAYS || "120", 10);
+
+// ---- Reddit OAuth (script-app password grant) -----------------------------
+
+let cachedToken = null;
+let cachedTokenExpiry = 0;
+
+async function getRedditToken() {
+  if (cachedToken && Date.now() < cachedTokenExpiry) return cachedToken;
+
+  const clientId = process.env.REDDIT_CLIENT_ID;
+  const clientSecret = process.env.REDDIT_CLIENT_SECRET;
+  const username = process.env.REDDIT_USERNAME;
+  const password = process.env.REDDIT_PASSWORD;
+  if (!clientId || !clientSecret || !username || !password) return null;
+
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+  const body = new URLSearchParams({
+    grant_type: "password",
+    username,
+    password,
+  });
+
+  const res = await fetch("https://www.reddit.com/api/v1/access_token", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basic}`,
+      "User-Agent": USER_AGENT,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    console.error(
+      `[reddit] OAuth token request failed (${res.status}): ${t.slice(0, 200)}`,
+    );
+    return null;
+  }
+  const json = await res.json();
+  if (!json.access_token) {
+    console.error("[reddit] OAuth response missing access_token:", json);
+    return null;
+  }
+  cachedToken = json.access_token;
+  // Subtract 60s as safety margin against clock skew.
+  cachedTokenExpiry = Date.now() + (json.expires_in - 60) * 1000;
+  console.log(
+    `[reddit] OAuth token acquired, valid for ${json.expires_in}s`,
+  );
+  return cachedToken;
+}
 
 // Per-feed pagination cap. 30 pages × 100 posts = 3000 posts theoretical max
 // per feed, plenty even for the most active subs.
@@ -33,9 +91,11 @@ const FEEDS = [
   { type: "search", subreddit: "Bengaluru", q: "flatmate needed", sort: "new" },
 ];
 
-function buildUrl(feed, after) {
+function buildUrl(feed, after, host) {
+  // host is "www.reddit.com" (unauth fallback) or "oauth.reddit.com" (auth).
+  // Endpoints serve identical JSON.
   if (feed.type === "search") {
-    const u = new URL(`https://www.reddit.com/r/${feed.subreddit}/search.json`);
+    const u = new URL(`https://${host}/r/${feed.subreddit}/search.json`);
     u.searchParams.set("q", feed.q);
     u.searchParams.set("restrict_sr", "1");
     u.searchParams.set("sort", feed.sort);
@@ -44,7 +104,7 @@ function buildUrl(feed, after) {
     return u.toString();
   }
   const u = new URL(
-    `https://www.reddit.com/r/${feed.subreddit}/${feed.sort}.json`,
+    `https://${host}/r/${feed.subreddit}/${feed.sort}.json`,
   );
   u.searchParams.set("limit", "100");
   if (feed.t) u.searchParams.set("t", feed.t);
@@ -54,17 +114,21 @@ function buildUrl(feed, after) {
 
 // Paginate until we hit MAX_PAGES_PER_FEED, posts older than cutoff,
 // or Reddit gives us no `after` token.
-async function exhaustFeed(feed, cutoffUnix) {
+async function exhaustFeed(feed, cutoffUnix, token) {
+  const host = token ? "oauth.reddit.com" : "www.reddit.com";
+  const baseHeaders = { "User-Agent": USER_AGENT };
+  if (token) baseHeaders["Authorization"] = `Bearer ${token}`;
+
   const posts = [];
   let after = null;
   let pagesPulled = 0;
   let stopReason = "max_pages";
 
   for (let page = 0; page < MAX_PAGES_PER_FEED; page++) {
-    const url = buildUrl(feed, after);
+    const url = buildUrl(feed, after, host);
     let res;
     try {
-      res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+      res = await fetch(url, { headers: baseHeaders });
     } catch (e) {
       stopReason = `fetch_err:${e.message}`;
       break;
@@ -113,8 +177,15 @@ async function exhaustFeed(feed, cutoffUnix) {
 export const id = "reddit";
 
 export async function fetchPosts() {
+  const token = await getRedditToken();
+  if (!token) {
+    console.log(
+      "[reddit] No OAuth credentials — Reddit closed unauthenticated access; " +
+        "set REDDIT_CLIENT_ID/SECRET/USERNAME/PASSWORD to enable scraping",
+    );
+  }
   console.log(
-    `[reddit] Pulling ${FEEDS.length} feeds, window=${MAX_AGE_DAYS}d, max ${MAX_PAGES_PER_FEED} pages/feed`,
+    `[reddit] Pulling ${FEEDS.length} feeds via ${token ? "oauth.reddit.com" : "www.reddit.com (unauth, likely to 403)"}, window=${MAX_AGE_DAYS}d, max ${MAX_PAGES_PER_FEED} pages/feed`,
   );
   const cutoff = Date.now() / 1000 - MAX_AGE_DAYS * 86400;
   const seen = new Map();
@@ -125,7 +196,7 @@ export async function fetchPosts() {
         ? `r/${feed.subreddit} search "${feed.q}"`
         : `r/${feed.subreddit} ${feed.sort}${feed.t ? "/" + feed.t : ""}`;
     process.stdout.write(`  ${label.padEnd(50)} `);
-    const { posts, pagesPulled, stopReason } = await exhaustFeed(feed, cutoff);
+    const { posts, pagesPulled, stopReason } = await exhaustFeed(feed, cutoff, token);
     let added = 0;
     for (const p of posts) {
       if (p.created_utc < cutoff) continue;
