@@ -25,6 +25,12 @@ import { inBangalore } from "./locality.mjs";
 // than this, so this gives renters one expiry sweep instead of two.
 const SCRAPED_LISTING_TTL_DAYS = 90;
 
+// Soft cap on how long we'll spend in the extraction loop. The GitHub Action
+// times out at 30 minutes; this keeps a safety margin so we still get to the
+// upsert + meta-row write even if Reddit returned a huge batch.
+const EXTRACTION_TIME_BUDGET_MS =
+  parseInt(process.env.EXTRACTION_BUDGET_MS || "0", 10) || 22 * 60_000;
+
 export async function runSource(source) {
   const stats = {
     source: source.id,
@@ -51,10 +57,20 @@ export async function runSource(source) {
   console.log(`     ${candidates.length} / ${posts.length} pass\n`);
 
   console.log(`[3/4] LLM extraction (Claude Haiku 4.5)`);
+  const extractionStart = Date.now();
   const extracted = []; // Array<{ post, parsed }>
   let i = 0;
   for (const post of candidates) {
     i += 1;
+    // Bail if we're close to the workflow's 30-min timeout. Better to upsert
+    // what we have than to time out mid-loop and lose all extraction work.
+    if (Date.now() - extractionStart > EXTRACTION_TIME_BUDGET_MS) {
+      console.log(
+        `  [budget] hit ${EXTRACTION_TIME_BUDGET_MS / 60_000}min cap after ${i - 1}/${candidates.length} posts; moving on to upsert`,
+      );
+      stats.budgetCapped = true;
+      break;
+    }
     const previewText = (post.title || post.body || "").slice(0, 56);
     process.stdout.write(
       `  [${i}/${candidates.length}] ${previewText.padEnd(58)} `,

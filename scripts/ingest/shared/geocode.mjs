@@ -41,7 +41,12 @@ export async function geocodeListing(parsed, seedKey) {
       geoSource: "nominatim",
     };
   }
-  const [baseLat, baseLng] = LOCALITY_GEO[parsed.locality];
+  // Defensive fallback: if Claude somehow handed us a locality that isn't in
+  // our canonical list (shouldn't happen — validateParsed gates this — but a
+  // missing key here would crash the whole run with an opaque destructure
+  // error), fall back to Bangalore city centre rather than throwing.
+  const centroid = LOCALITY_GEO[parsed.locality] || [12.9716, 77.5946];
+  const [baseLat, baseLng] = centroid;
   return {
     lat: +(baseLat + jitter(seedKey)).toFixed(5),
     lng: +(baseLng + jitter(seedKey + "x")).toFixed(5),
