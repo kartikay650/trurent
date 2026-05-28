@@ -37,7 +37,11 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # @supabase/supabase-js v2.106+ initializes its realtime client at
+          # construction time and that needs native WebSocket support, which
+          # Node 20 lacks. 22 LTS ships with native WebSocket; Vercel runs 24
+          # so staying on 22+ also matches prod parity.
+          node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
