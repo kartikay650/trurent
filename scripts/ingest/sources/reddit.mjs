@@ -1,79 +1,36 @@
-// Reddit source. Targets Bangalore-specific rental subs with EXHAUSTIVE
-// pagination — paginate until we hit posts older than MAX_AGE_DAYS, not just
-// the first 3 pages.
+// Reddit source — RSS-based.
 //
-// We deliberately stay narrow (no India-wide subs); going broad dilutes yield.
+// Reddit closed the public .json endpoints (every variant returns 403 from
+// any IP / UA we've tested) and their OAuth API now requires a paid tier we
+// don't have. The one path Reddit hasn't shut down is the per-subreddit RSS
+// (Atom XML) feed at /r/<sub>/new.rss + the per-subreddit search.rss.
 //
-// Auth: Reddit closed unauthenticated .json access. We use OAuth with the
-// "password" grant (script-app type) — needs REDDIT_CLIENT_ID,
-// REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD env vars. If those
-// aren't set, we fall back to the public .json endpoints (will 403 in CI
-// but might still work locally if Reddit ever loosens up again).
+// Each feed gives 25 entries. With ~13 narrow rental-focused feeds that's
+// ~325 candidates per run — more than enough yield for a daily refresh.
+// We don't lose much: the JSON path used to paginate to 30 pages, but the
+// signal density past page 1 was negligible for these niche subs.
+//
+// What RSS gives us:
+//   - id          (parsed from <id>t3_xyz</id>)
+//   - title
+//   - body text   (HTML inside <content>, decoded + tag-stripped here)
+//   - author
+//   - subreddit
+//   - permalink + canonical URL
+//   - published timestamp (ISO -> unix)
+//   - preview image URLs (we grep for preview.redd.it in the body HTML)
+//
+// What we lose vs JSON: gallery metadata, removed/banned flags, comment
+// counts. None of those matter for our use case.
 
 import { USER_AGENT } from "../shared/env.mjs";
 import { sleep, daysAgoFromUnix } from "../shared/util.mjs";
 
 const MAX_AGE_DAYS = parseInt(process.env.MAX_AGE_DAYS || "120", 10);
 
-// ---- Reddit OAuth (script-app password grant) -----------------------------
-
-let cachedToken = null;
-let cachedTokenExpiry = 0;
-
-async function getRedditToken() {
-  if (cachedToken && Date.now() < cachedTokenExpiry) return cachedToken;
-
-  const clientId = process.env.REDDIT_CLIENT_ID;
-  const clientSecret = process.env.REDDIT_CLIENT_SECRET;
-  const username = process.env.REDDIT_USERNAME;
-  const password = process.env.REDDIT_PASSWORD;
-  if (!clientId || !clientSecret || !username || !password) return null;
-
-  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-  const body = new URLSearchParams({
-    grant_type: "password",
-    username,
-    password,
-  });
-
-  const res = await fetch("https://www.reddit.com/api/v1/access_token", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${basic}`,
-      "User-Agent": USER_AGENT,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
-  });
-
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    console.error(
-      `[reddit] OAuth token request failed (${res.status}): ${t.slice(0, 200)}`,
-    );
-    return null;
-  }
-  const json = await res.json();
-  if (!json.access_token) {
-    console.error("[reddit] OAuth response missing access_token:", json);
-    return null;
-  }
-  cachedToken = json.access_token;
-  // Subtract 60s as safety margin against clock skew.
-  cachedTokenExpiry = Date.now() + (json.expires_in - 60) * 1000;
-  console.log(
-    `[reddit] OAuth token acquired, valid for ${json.expires_in}s`,
-  );
-  return cachedToken;
-}
-
-// Per-feed pagination cap. 30 pages × 100 posts = 3000 posts theoretical max
-// per feed, plenty even for the most active subs.
-const MAX_PAGES_PER_FEED = 30;
-
 // Bangalore-focused feeds only. Order is roughly highest-signal first.
 const FEEDS = [
-  // Specialty subs: exhaust their entire 120-day window
+  // Specialty subs: pull the new tab directly
   { type: "feed", subreddit: "bangalorerentals", sort: "new" },
   { type: "feed", subreddit: "bangalorerentals", sort: "top", t: "year" },
   { type: "feed", subreddit: "BangaloreFlatsRental", sort: "new" },
@@ -91,101 +48,142 @@ const FEEDS = [
   { type: "search", subreddit: "Bengaluru", q: "flatmate needed", sort: "new" },
 ];
 
-function buildUrl(feed, after, host) {
-  // host is "www.reddit.com" (unauth fallback) or "oauth.reddit.com" (auth).
-  // Endpoints serve identical JSON.
+function buildFeedUrl(feed) {
   if (feed.type === "search") {
-    const u = new URL(`https://${host}/r/${feed.subreddit}/search.json`);
+    const u = new URL(`https://www.reddit.com/r/${feed.subreddit}/search.rss`);
     u.searchParams.set("q", feed.q);
     u.searchParams.set("restrict_sr", "1");
     u.searchParams.set("sort", feed.sort);
-    u.searchParams.set("limit", "100");
-    if (after) u.searchParams.set("after", after);
     return u.toString();
   }
   const u = new URL(
-    `https://${host}/r/${feed.subreddit}/${feed.sort}.json`,
+    `https://www.reddit.com/r/${feed.subreddit}/${feed.sort}.rss`,
   );
-  u.searchParams.set("limit", "100");
   if (feed.t) u.searchParams.set("t", feed.t);
-  if (after) u.searchParams.set("after", after);
   return u.toString();
 }
 
-// Paginate until we hit MAX_PAGES_PER_FEED, posts older than cutoff,
-// or Reddit gives us no `after` token.
-async function exhaustFeed(feed, cutoffUnix, token) {
-  const host = token ? "oauth.reddit.com" : "www.reddit.com";
-  const baseHeaders = { "User-Agent": USER_AGENT };
-  if (token) baseHeaders["Authorization"] = `Bearer ${token}`;
+// --------- Atom XML parsing (no deps) -----------------------------------
 
-  const posts = [];
-  let after = null;
-  let pagesPulled = 0;
-  let stopReason = "max_pages";
-
-  for (let page = 0; page < MAX_PAGES_PER_FEED; page++) {
-    const url = buildUrl(feed, after, host);
-    let res;
-    try {
-      res = await fetch(url, { headers: baseHeaders });
-    } catch (e) {
-      stopReason = `fetch_err:${e.message}`;
-      break;
-    }
-    if (res.status === 429) {
-      console.log(`    [feed] rate-limited; sleeping 30s`);
-      await sleep(30000);
-      page -= 1;
-      continue;
-    }
-    if (!res.ok) {
-      stopReason = `http_${res.status}`;
-      break;
-    }
-    const json = await res.json();
-    const children = json?.data?.children || [];
-    if (children.length === 0) {
-      stopReason = "empty_page";
-      break;
-    }
-    pagesPulled += 1;
-
-    let pageHasFresh = false;
-    for (const c of children) {
-      const p = c.data;
-      if (!p?.id) continue;
-      if (p.created_utc >= cutoffUnix) pageHasFresh = true;
-      posts.push(p);
-    }
-
-    // If THIS WHOLE PAGE is older than cutoff, we've gone past the window
-    if (!pageHasFresh) {
-      stopReason = "past_window";
-      break;
-    }
-    after = json?.data?.after;
-    if (!after) {
-      stopReason = "no_after";
-      break;
-    }
-    await sleep(1500);
-  }
-  return { posts, pagesPulled, stopReason };
+function decodeEntities(s) {
+  if (!s) return "";
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#32;/g, " ")
+    .replace(/&#x([\da-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    // &amp; MUST run last so we don't double-decode entities of the form &amp;lt;
+    .replace(/&amp;/g, "&");
 }
+
+function htmlToText(html) {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// Reddit's RSS appends a "submitted by /u/X [link] [comments]" trailer.
+// Strip it so Claude sees just the body the user actually wrote.
+function stripRedditBoilerplate(text) {
+  return text
+    .replace(/\s*submitted by\s*\/u\/\S+\s*\[link\]\s*\[comments\]\s*$/i, "")
+    .trim();
+}
+
+function firstMatch(re, str) {
+  const m = re.exec(str);
+  return m ? m[1] : null;
+}
+
+function parseAtom(xml) {
+  const out = [];
+  const entryRe = /<entry>([\s\S]*?)<\/entry>/g;
+  let m;
+  while ((m = entryRe.exec(xml)) !== null) {
+    const block = m[1];
+
+    const idRaw = firstMatch(/<id>([^<]+)<\/id>/, block) || "";
+    const id = idRaw.replace(/^t3_/, "");
+    if (!id) continue;
+
+    const title = decodeEntities(firstMatch(/<title>([\s\S]*?)<\/title>/, block) || "");
+    const linkHref = firstMatch(/<link[^>]*href="([^"]+)"/, block) || null;
+    const permalink = linkHref ? new URL(linkHref).pathname : null;
+    const author =
+      firstMatch(/<author>[\s\S]*?<name>\/u\/([^<]+)<\/name>/, block) ||
+      firstMatch(/<author>[\s\S]*?<name>([^<]+)<\/name>/, block) ||
+      null;
+    const subreddit = firstMatch(/<category[^>]*term="([^"]+)"/, block);
+    const publishedIso =
+      firstMatch(/<published>([^<]+)<\/published>/, block) ||
+      firstMatch(/<updated>([^<]+)<\/updated>/, block);
+    const created_utc = publishedIso
+      ? Math.floor(new Date(publishedIso).getTime() / 1000)
+      : 0;
+
+    const contentRaw = firstMatch(/<content[^>]*>([\s\S]*?)<\/content>/, block) || "";
+    const contentHtml = decodeEntities(contentRaw);
+    // Capture preview.redd.it image URLs (decoded HTML still has them).
+    const imageUrls = [
+      ...contentHtml.matchAll(/https:\/\/preview\.redd\.it\/[^\s"'<>)]+/g),
+    ].map((m) => m[0]);
+
+    const selftext = stripRedditBoilerplate(htmlToText(contentHtml));
+
+    out.push({
+      id,
+      title,
+      selftext,
+      author,
+      subreddit,
+      permalink,
+      url: linkHref,
+      created_utc,
+      _rssImageUrls: imageUrls,
+    });
+  }
+  return out;
+}
+
+// --------- Feed fetching -------------------------------------------------
+
+async function fetchFeed(feed) {
+  const url = buildFeedUrl(feed);
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "application/atom+xml, application/xml, text/xml, */*",
+      },
+    });
+  } catch (e) {
+    return { posts: [], stopReason: `fetch_err:${e.message}` };
+  }
+  if (res.status === 429) {
+    return { posts: [], stopReason: "rate_limited_429" };
+  }
+  if (!res.ok) {
+    return { posts: [], stopReason: `http_${res.status}` };
+  }
+  const xml = await res.text();
+  const posts = parseAtom(xml);
+  return { posts, stopReason: posts.length > 0 ? "ok" : "empty_feed" };
+}
+
+// --------- Exports (consumed by the source-agnostic pipeline) -----------
 
 export const id = "reddit";
 
 export async function fetchPosts() {
-  const token = await getRedditToken();
-  if (!token) {
-    console.log(
-      "[reddit] No OAuth credentials — Reddit closed unauthenticated access; " +
-        "set REDDIT_CLIENT_ID/SECRET/USERNAME/PASSWORD to enable scraping",
-    );
-  }
   console.log(
-    `[reddit] Pulling ${FEEDS.length} feeds via ${token ? "oauth.reddit.com" : "www.reddit.com (unauth, likely to 403)"}, window=${MAX_AGE_DAYS}d, max ${MAX_PAGES_PER_FEED} pages/feed`,
+    `[reddit] Pulling ${FEEDS.length} feeds via RSS, window=${MAX_AGE_DAYS}d`,
   );
   const cutoff = Date.now() / 1000 - MAX_AGE_DAYS * 86400;
   const seen = new Map();
@@ -196,17 +194,18 @@ export async function fetchPosts() {
         ? `r/${feed.subreddit} search "${feed.q}"`
         : `r/${feed.subreddit} ${feed.sort}${feed.t ? "/" + feed.t : ""}`;
     process.stdout.write(`  ${label.padEnd(50)} `);
-    const { posts, pagesPulled, stopReason } = await exhaustFeed(feed, cutoff, token);
+    const { posts, stopReason } = await fetchFeed(feed);
     let added = 0;
     for (const p of posts) {
-      if (p.created_utc < cutoff) continue;
+      if (p.created_utc && p.created_utc < cutoff) continue;
       if (seen.has(p.id)) continue;
       seen.set(p.id, p);
       added += 1;
     }
     console.log(
-      `${posts.length.toString().padStart(4)} fetched, ${added.toString().padStart(3)} new in window  (pages=${pagesPulled}, stop=${stopReason})`,
+      `${posts.length.toString().padStart(4)} fetched, ${added.toString().padStart(3)} new in window  (stop=${stopReason})`,
     );
+    // Be nice to Reddit — 1.5s between feeds.
     await sleep(1500);
   }
 
@@ -219,9 +218,6 @@ export function preFilter(post) {
   const text = `${title}\n${body}`;
   if (text.length < 50) return false;
   if (text.length > 6000) return false;
-  if (post.removed_by_category || post.banned_by) return false;
-  const t = (post.selftext || "").trim();
-  if (t === "[deleted]" || t === "[removed]") return false;
   if (!/\b(bhk|bedroom|studio|flat|apartment|room|pg)\b/.test(text)) return false;
   if (
     !/(₹|\brs\.?\b|rupees|\b\d{1,2}k\b|\blakh\b|\brent\b|\bdeposit\b)/.test(text)
@@ -251,32 +247,23 @@ export function rawText(post) {
   return `Title: ${post.title}\n\nBody:\n${post.selftext || "(no body)"}`;
 }
 
-// Extract photos directly from Reddit post (gallery / preview / direct).
+// Pull preview-quality image URLs we captured from the RSS content.
 export function extractPhotos(post) {
-  const photos = [];
+  if (!Array.isArray(post._rssImageUrls) || post._rssImageUrls.length === 0) {
+    return null;
+  }
   const seen = new Set();
-  function add(url) {
-    if (!url || seen.has(url)) return;
-    const clean = url.replace(/&amp;/g, "&");
+  const out = [];
+  for (const u of post._rssImageUrls) {
+    const clean = u.replace(/&amp;/g, "&");
+    if (seen.has(clean)) continue;
     seen.add(clean);
-    photos.push(clean);
+    out.push(clean);
+    if (out.length >= 5) break;
   }
-  if (post.gallery_data?.items && post.media_metadata) {
-    for (const item of post.gallery_data.items) {
-      const meta = post.media_metadata[item.media_id];
-      if (meta?.s?.u) add(meta.s.u);
-    }
-  }
-  if (post.preview?.images) {
-    for (const img of post.preview.images) {
-      if (img.source?.url) add(img.source.url);
-    }
-  }
-  if (/\.(jpg|jpeg|png|webp)(\?.*)?$/i.test(post.url || "")) add(post.url);
-  return photos.length > 0 ? photos.slice(0, 5) : null;
+  return out.length > 0 ? out : null;
 }
 
-// Shape a parsed extraction + raw post into a canonical Listing row.
 export function normalize(post, parsed) {
   const id = `rdt_${post.id}`;
   const redditPhotos = extractPhotos(post);
@@ -294,20 +281,19 @@ export function normalize(post, parsed) {
     amenities: Array.isArray(parsed.amenities) ? parsed.amenities : [],
     nearby: [],
     source: "reddit",
-    sourceUrl: `https://www.reddit.com${post.permalink}`,
+    sourceUrl: post.url || `https://www.reddit.com${post.permalink || ""}`,
     sourceAuthor: post.author,
     sourceSubreddit: post.subreddit,
     description:
       parsed.description ||
       (post.selftext || post.title).slice(0, 240).replace(/\s+/g, " "),
-    postedDaysAgo: daysAgoFromUnix(post.created_utc),
-    postedAt: new Date(post.created_utc * 1000).toISOString(),
-    // Only carry real photos extracted from the post. Stock/AI photos used to
-    // be filled in here as a fallback, but the UI now renders an honest
-    // "no photos" state when this array is empty.
+    postedDaysAgo: post.created_utc ? daysAgoFromUnix(post.created_utc) : 1,
+    postedAt: post.created_utc
+      ? new Date(post.created_utc * 1000).toISOString()
+      : new Date().toISOString(),
     photos: redditPhotos || [],
     hasRealPhotos: !!redditPhotos,
-    locationQuery: parsed.location_query || parsed.locality, // used by geocoder
-    _seedKey: id, // used by geocoder fallback jitter
+    locationQuery: parsed.location_query || parsed.locality,
+    _seedKey: id,
   };
 }
