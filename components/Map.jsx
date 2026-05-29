@@ -35,36 +35,41 @@ function buildIcon(listing, isSelected) {
   const star = listing.brokerage === 0 ? "★ " : "";
   const rentLabel = shortRent(listing.rent);
   const gender = genderGlyph(listing.genderPreference);
+
+  // Selected = inverted (dark fill); idle = white with a thin coloured border
+  // matching the rent bucket. Border stays 1px in both states so the pill
+  // doesn't visually reflow when you click it.
   const bg = isSelected ? "#1C1B18" : "#FFFFFF";
   const fg = isSelected ? "#FFFFFF" : "#1C1B18";
-  const borderWidth = isSelected ? "2.5px" : "1.5px";
+  const borderColor = isSelected ? "#1C1B18" : color;
   const shadow = isSelected
-    ? "0 4px 14px rgba(28,27,24,0.22)"
-    : "0 2px 6px rgba(28,27,24,0.10)";
+    ? "0 2px 8px rgba(28,27,24,0.20)"
+    : "0 1px 3px rgba(28,27,24,0.10)";
 
-  // When isSelected the foreground is light, so use a lighter tint for the
-  // gender glyph so it stays legible on the dark pill.
   const glyphColor = gender
     ? isSelected
       ? "#FFFFFF"
       : gender.tint
     : "transparent";
   const glyphHtml = gender
-    ? `<span style="margin-left:6px;color:${glyphColor};font-size:13px;line-height:1;display:inline-block;vertical-align:-1px;">${gender.glyph}</span>`
+    ? `<span style="margin-left:3px;color:${glyphColor};font-size:9px;line-height:1;">${gender.glyph}</span>`
     : "";
 
+  // Outer wrapper anchors the pill horizontally via translateX, so variable-
+  // width labels (e.g. "₹25k" vs "₹125k") all sit centred on the coordinate.
   const html =
+    `<div style="transform:translateX(-50%);">` +
     `<div style="background:${bg};color:${fg};` +
-    `border:${borderWidth} solid ${color};border-radius:20px;` +
-    `padding:4px 10px;font-size:11px;font-family:'DM Mono',monospace;` +
+    `border:1px solid ${borderColor};border-radius:9px;` +
+    `padding:1px 7px;font-size:10px;font-family:'DM Mono',monospace;` +
     `font-weight:500;white-space:nowrap;cursor:pointer;letter-spacing:-0.02em;` +
-    `box-shadow:${shadow};display:inline-flex;align-items:center;">` +
-    `<span>${star}${rentLabel}</span>${glyphHtml}</div>`;
+    `box-shadow:${shadow};display:inline-flex;align-items:center;line-height:1.4;">` +
+    `<span>${star}${rentLabel}</span>${glyphHtml}</div></div>`;
 
   return L.divIcon({
     html,
-    className: "",
-    iconAnchor: [40, 12],
+    className: "trurent-pill",
+    iconAnchor: [0, 9],
   });
 }
 
