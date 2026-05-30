@@ -21,9 +21,14 @@ import { upsertListings, readActiveListings, supabase } from "./supabase.mjs";
 import { inBangalore } from "./locality.mjs";
 
 // How long a scraped (non-owner) listing stays "active" without being touched
-// by a fresh scrape. Reddit posts age out of the 120-day fetch window faster
-// than this, so this gives renters one expiry sweep instead of two.
-const SCRAPED_LISTING_TTL_DAYS = 90;
+// by a fresh scrape. Most Bangalore rental posts get filled within 4-6 weeks,
+// so 60d is a realistic "could still be available" window.
+const SCRAPED_LISTING_TTL_DAYS = 60;
+
+// Hard cap on listing age regardless of whether it keeps showing up in feeds.
+// Reddit search will sometimes resurface a 4-month-old post because someone
+// commented; we still treat it as stale.
+const SCRAPED_LISTING_MAX_AGE_DAYS = 60;
 
 // Soft cap on how long we'll spend in the extraction loop. The GitHub Action
 // times out at 30 minutes; this keeps a safety margin so we still get to the
@@ -155,23 +160,44 @@ export async function runSource(source) {
     }
   }
 
-  // Sweep: any non-owner row whose expiresAt is now in the past gets marked
-  // status='expired'. Renters won't see it on the map. Owner submissions are
-  // skipped — they're managed manually by the submitter / admin.
-  const { data: swept, error: sweepErr } = await supabase
-    .from("listings")
-    .update({ status: "expired" })
-    .lt("expiresAt", new Date().toISOString())
-    .neq("source", "owner")
-    .eq("status", "active")
-    .select("id");
-  if (sweepErr) {
-    console.error("expiry sweep failed:", sweepErr.message);
-  } else if (swept && swept.length > 0) {
-    console.log(`     expired ${swept.length} stale listings`);
-    stats.expiredStale = swept.length;
-  } else {
-    stats.expiredStale = 0;
+  // Expiry sweep — two independent predicates, both retire non-owner rows:
+  //   (a) expiresAt < now            (TTL since we last saw this post elapsed)
+  //   (b) postedAt < now - MAX_AGE   (original post is too old, regardless of
+  //                                   whether Reddit keeps surfacing it)
+  // Owner submissions are skipped — they're managed manually.
+  const now = new Date();
+  const ageCutoff = new Date(
+    now.getTime() - SCRAPED_LISTING_MAX_AGE_DAYS * 86400 * 1000,
+  ).toISOString();
+
+  const sweepResults = await Promise.all([
+    supabase
+      .from("listings")
+      .update({ status: "expired" })
+      .lt("expiresAt", now.toISOString())
+      .neq("source", "owner")
+      .eq("status", "active")
+      .select("id"),
+    supabase
+      .from("listings")
+      .update({ status: "expired" })
+      .lt("postedAt", ageCutoff)
+      .neq("source", "owner")
+      .eq("status", "active")
+      .select("id"),
+  ]);
+  const expiredByTtl = sweepResults[0].data?.length || 0;
+  const expiredByAge = sweepResults[1].data?.length || 0;
+  for (const r of sweepResults) {
+    if (r.error) console.error("expiry sweep failed:", r.error.message);
+  }
+  stats.expiredByTtl = expiredByTtl;
+  stats.expiredByAge = expiredByAge;
+  stats.expiredStale = expiredByTtl + expiredByAge;
+  if (stats.expiredStale > 0) {
+    console.log(
+      `     expired ${stats.expiredStale} stale listings (${expiredByTtl} via TTL, ${expiredByAge} via age cap)`,
+    );
   }
 
   console.log(`\n--- ${source.id} stats ---`);
