@@ -159,7 +159,7 @@ const TOOL_LABEL = {
 const STORAGE_KEY = "trurent_chat_v1";
 const SUGGESTIONS = [
   "I work at Manyata, find me a 1-2 BHK under 25k",
-  "Cheapest zero-brokerage flats",
+  "Furnished 2BHK in HSR under 40k, posted this week",
   "Compare 3 premium 3BHK options in Indiranagar",
 ];
 

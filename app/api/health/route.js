@@ -42,7 +42,6 @@ export async function GET() {
       ageHours,
       stale,
       realPhotoCount: metaRow?.realPhotoCount ?? null,
-      zeroBrokerageCount: metaRow?.zeroBrokerageCount ?? null,
       bhkDistribution: metaRow?.bhkDistribution ?? null,
       typeDistribution: metaRow?.typeDistribution ?? null,
       genderDistribution: metaRow?.genderDistribution ?? null,

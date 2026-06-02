@@ -100,16 +100,7 @@ function computeAlternatives(filters) {
     }
   }
 
-  // 3. Drop the noBrokerageOnly constraint
-  if (filters.noBrokerageOnly) {
-    const n = filterListings(LISTINGS, {
-      ...baseRest,
-      noBrokerageOnly: false,
-    }).length;
-    if (n > 0) alts.if_brokerage_allowed = { count: n };
-  }
-
-  // 4. Drop the amenity constraint(s)
+  // 3. Drop the amenity constraint(s)
   if (Array.isArray(filters.amenities) && filters.amenities.length > 0) {
     const without = { ...baseRest };
     delete without.amenities;
@@ -167,7 +158,6 @@ Tech park → locality mapping:
 
 When searching:
 - bhk is an array of integers. Supported values are 1, 2, 3, 4, and 5 (where 5 covers any flat with 5 or more bedrooms). Owners can list higher BHK counts; a [5] filter shows everything 5+.
-- For "no broker"/"zero brokerage"/"direct owner", set noBrokerageOnly: true.
 - For "cheap" with no number, use maxRent: 20000. "Premium" or "luxury" → minRent: 50000.
 - amenities are from this EXACT list: gym, pool, parking, power_backup, garden, security, club. Nothing else (no wifi, no AC, no pet-friendly, none of those are in the dataset).
 
@@ -179,7 +169,7 @@ The search_listings tool returns a result object that may include:
 - unknown_localities (locality names that aren't in our Bangalore dataset, e.g. "Mumbai", "Pune")
 - unsupported_amenities (amenities not in our schema, e.g. "wifi")
 - unsupported_bhks (BHK counts we don't carry, e.g. 4)
-- alternatives (suggestions for relaxing filters): may contain {if_max_rent_raised_30pct, if_bhk_broadened, if_brokerage_allowed, if_amenities_dropped, nearby_localities_with_inventory}
+- alternatives (suggestions for relaxing filters): may contain {if_max_rent_raised_30pct, if_bhk_broadened, if_amenities_dropped, nearby_localities_with_inventory}
 
 You MUST react to these intelligently:
 
@@ -212,7 +202,7 @@ const TOOLS = [
   {
     name: "search_listings",
     description:
-      "Search the Bangalore rental database with structured filters. Returns the total count, the filters that were applied, and up to 25 matching listings (id, title, locality, rent, bhk, furnished, brokerage, amenities, source). The user-facing map updates to show the results of this search automatically.",
+      "Search the Bangalore rental database with structured filters. Returns the total count, the filters that were applied, and up to 25 matching listings (id, title, locality, rent, bhk, furnished, amenities, source). The user-facing map updates to show the results of this search automatically.",
     input_schema: {
       type: "object",
       properties: {
@@ -238,10 +228,6 @@ const TOOLS = [
         furnished: {
           type: "string",
           enum: ["fully", "semi", "unfurnished"],
-        },
-        noBrokerageOnly: {
-          type: "boolean",
-          description: "True if the user wants zero-brokerage / direct-owner listings only.",
         },
         amenities: {
           type: "array",
@@ -287,7 +273,6 @@ function shortListing(l) {
     rent: l.rent,
     bhk: l.bhk,
     furnished: l.furnished,
-    brokerage: l.brokerage,
     amenities: l.amenities,
     source: l.source,
     postedDaysAgo: l.postedDaysAgo,

@@ -32,7 +32,6 @@ function genderGlyph(pref) {
 
 function buildIcon(listing, isSelected) {
   const color = rentColor(listing.rent);
-  const star = listing.brokerage === 0 ? "★ " : "";
   const rentLabel = shortRent(listing.rent);
   const gender = genderGlyph(listing.genderPreference);
 
@@ -64,7 +63,7 @@ function buildIcon(listing, isSelected) {
     `padding:1px 7px;font-size:10px;font-family:'DM Mono',monospace;` +
     `font-weight:500;white-space:nowrap;cursor:pointer;letter-spacing:-0.02em;` +
     `box-shadow:${shadow};display:inline-flex;align-items:center;line-height:1.4;">` +
-    `<span>${star}${rentLabel}</span>${glyphHtml}</div></div>`;
+    `<span>${rentLabel}</span>${glyphHtml}</div></div>`;
 
   return L.divIcon({
     html,

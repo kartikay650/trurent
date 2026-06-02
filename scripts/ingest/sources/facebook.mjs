@@ -71,7 +71,6 @@ export function normalize(post, parsed) {
     locality: parsed.locality,
     rent: parsed.rent,
     deposit: parsed.deposit ?? parsed.rent * 10,
-    brokerage: parsed.brokerage ?? parsed.rent,
     bhk: parsed.bhk,
     furnished: parsed.furnished || "semi",
     listingType: parsed.listingType || "room",

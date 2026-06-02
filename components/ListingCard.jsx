@@ -381,18 +381,6 @@ export default function ListingCard({ listing, onClose }) {
                 gap: 6,
               }}
             >
-              {listing.brokerage === 0 && (
-                <span
-                  style={{
-                    ...PILL_BASE,
-                    background: "rgba(22,163,74,0.08)",
-                    color: "#16A34A",
-                    border: "1px solid rgba(22,163,74,0.20)",
-                  }}
-                >
-                  Zero brokerage
-                </span>
-              )}
               {listing.furnished && FURNISHED_STYLE[listing.furnished] && (
                 <span
                   style={{
@@ -410,7 +398,7 @@ export default function ListingCard({ listing, onClose }) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr",
+              gridTemplateColumns: "1fr 1fr",
               gap: 12,
               marginTop: 16,
             }}
@@ -426,20 +414,6 @@ export default function ListingCard({ listing, onClose }) {
                 }}
               >
                 {formatINR(listing.deposit)}
-              </div>
-            </div>
-            <div>
-              <div style={LABEL_STYLE}>BROKERAGE</div>
-              <div
-                style={{
-                  marginTop: 4,
-                  fontFamily: "var(--font-dm-mono), monospace",
-                  fontSize: 13,
-                  color:
-                    listing.brokerage === 0 ? "#16A34A" : "var(--text-secondary)",
-                }}
-              >
-                {listing.brokerage === 0 ? "None" : formatINR(listing.brokerage)}
               </div>
             </div>
             <div>

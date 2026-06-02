@@ -11,7 +11,6 @@ import ReportRow from "./ReportRow";
 export const dynamic = "force-dynamic";
 
 const REPORT_LABEL = {
-  wrong_brokerage: "Brokerage info",
   wrong_listing_type: "Listing type",
   wrong_locality: "Locality",
   rented_out: "Already rented out",
@@ -31,7 +30,7 @@ export default async function ReportsPage() {
       id, listing_id, report_type, details, created_at, resolved,
       resolved_at, resolution_note,
       listings:listing_id (
-        id, title, locality, bhk, rent, brokerage, listingType, source, status
+        id, title, locality, bhk, rent, listingType, source, status
       )
     `)
     .order("resolved", { ascending: true })

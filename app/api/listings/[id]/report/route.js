@@ -1,5 +1,5 @@
 // User-submitted report endpoint. Anyone can flag a listing as
-// "wrong brokerage", "wrong listing type", "rented out", etc.
+// "wrong listing type", "wrong locality", "rented out", etc.
 //
 // Rate-limited per IP so a single bad actor can't spam the queue.
 
@@ -10,7 +10,6 @@ import { rateLimit, clientIp } from "@/lib/rateLimit";
 export const runtime = "nodejs";
 
 const ALLOWED_TYPES = new Set([
-  "wrong_brokerage",
   "wrong_listing_type",
   "wrong_locality",
   "rented_out",

@@ -206,13 +206,6 @@ export default function Home() {
       onRemove: () => removeFilterKey("furnished"),
     });
   }
-  if (filters.noBrokerageOnly) {
-    chips.push({
-      key: "noBrok",
-      label: "Zero brokerage",
-      onRemove: () => removeFilterKey("noBrokerageOnly"),
-    });
-  }
   if (filters.source) {
     const canon = normalizeSource(filters.source) ?? filters.source;
     chips.push({
@@ -537,19 +530,6 @@ export default function Home() {
                   {label}
                 </span>
               ))}
-              <span
-                style={{
-                  marginLeft: 4,
-                  paddingLeft: 14,
-                  borderLeft: "1px solid var(--border-subtle)",
-                  fontSize: 11,
-                  color: "var(--text-tertiary)",
-                  fontStyle: "italic",
-                  fontFamily: "var(--font-playfair), serif",
-                }}
-              >
-                ★ no brokerage
-              </span>
               <span
                 style={{
                   marginLeft: 4,

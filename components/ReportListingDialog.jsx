@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 
 const REPORT_OPTIONS = [
-  { value: "wrong_brokerage", label: "Brokerage info is wrong" },
   { value: "wrong_listing_type", label: "Not actually entire flat / room as stated" },
   { value: "wrong_locality", label: "Locality is wrong" },
   { value: "rented_out", label: "Already rented out" },

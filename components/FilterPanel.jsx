@@ -137,15 +137,6 @@ export default function FilterPanel({ filters, setFilters }) {
     });
   }
 
-  function toggleNoBroker() {
-    setFilters((f) => {
-      const out = { ...f };
-      if (f.noBrokerageOnly) delete out.noBrokerageOnly;
-      else out.noBrokerageOnly = true;
-      return out;
-    });
-  }
-
   function setListingType(value) {
     setFilters((f) => {
       const out = { ...f };
@@ -174,7 +165,6 @@ export default function FilterPanel({ filters, setFilters }) {
     filters.minRent != null,
     filters.localities?.length,
     filters.furnished,
-    filters.noBrokerageOnly,
     filters.amenities?.length,
     filters.listingType,
     filters.postedWithinDays,
@@ -463,30 +453,21 @@ export default function FilterPanel({ filters, setFilters }) {
             </div>
           </div>
 
-          {/* No brokerage + clear */}
-          <div
-            className="trurent-fp-row"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 0,
-            }}
-          >
-            <button
-              type="button"
-              className={`trurent-fp-chip${filters.noBrokerageOnly ? " on" : ""}`}
-              onClick={toggleNoBroker}
-              style={{ margin: 0 }}
+          {/* Clear all */}
+          {activeCount > 0 && (
+            <div
+              className="trurent-fp-row"
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                marginBottom: 0,
+              }}
             >
-              Zero brokerage only
-            </button>
-            {activeCount > 0 && (
               <button type="button" className="trurent-fp-clear" onClick={clearAll}>
                 Clear all
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>

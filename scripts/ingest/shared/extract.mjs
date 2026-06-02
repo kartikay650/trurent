@@ -29,11 +29,6 @@ ${LOCALITY_LIST_STR}",
   "location_query": "most SPECIFIC address-like string from the post, suitable for geocoding. e.g. 'Koramangala 5th Block, near Sony Signal' or 'HSR Layout Sector 2, 27th Main'. NO city name needed.",
   "rent": integer (INR/month, REQUIRED, must be 5000-500000. If the post says 'X per person' or 'X for the room' that IS the rent),
   "deposit": integer (INR, omit if not stated),
-  "brokerage": integer — VERY IMPORTANT, read carefully:
-    - "no brokerage", "zero brokerage", "direct owner", "owner direct", "no broker", "0 brokerage" → set to 0
-    - specific broker fee (e.g. "brokerage 15000", "broker charges 1 month") → that amount (convert "1 month" to the rent amount)
-    - word "broker"/"brokerage" preceded/followed by "no"/"not"/"zero"/"without" → 0
-    - not mentioned → omit (caller will default),
   "bhk": integer 1-10. 1 for single rooms / studios / PGs / shared rooms. 2 and up only when the whole flat is being offered. Record the actual number — a 5BHK villa is 5, not 3.,
   "listingType": "entire_flat" | "room" | "pg":
     - "entire_flat" = the WHOLE flat is being offered ("2BHK for rent", "entire flat available")

@@ -71,7 +71,6 @@ const INITIAL_FORM = {
   amenities: [],
   rent: "",
   deposit: "",
-  brokerage: 0,
   genderPreference: "any",
   title: "",
   description: "",
@@ -188,7 +187,6 @@ export default function PostListingPage() {
       fd.append("bhk", String(parseInt(form.bhk, 10)));
       fd.append("rent", String(parseInt(form.rent, 10)));
       fd.append("deposit", String(parseInt(form.deposit, 10) || parseInt(form.rent, 10) * 10));
-      fd.append("brokerage", String(parseInt(form.brokerage, 10) || 0));
       fd.append("furnished", form.furnished);
       fd.append("listingType", form.listingType);
       fd.append("genderPreference", form.genderPreference);
@@ -362,19 +360,6 @@ export default function PostListingPage() {
                 />
               </Field>
             </Row>
-            <Field
-              label="Brokerage (₹)"
-              hint="0 means you're listing directly — zero brokerage, listed as such on the map."
-            >
-              <input
-                type="number"
-                inputMode="numeric"
-                value={form.brokerage}
-                onChange={(e) => update("brokerage", e.target.value)}
-                placeholder="0"
-                style={inputStyle}
-              />
-            </Field>
             <Field label="Tenant preference">
               <ChipRow
                 options={[
